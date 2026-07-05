@@ -1,0 +1,15 @@
+# 舆情监控对象配置 —— single source of truth（git 版本化、可 review、可回滚）
+# MVP：自有产品 + 微博/知乎/黑猫。竞品仅占位（SOV 是 Phase 1）。
+
+platforms: [weibo, zhihu, heimao]      # heimao=黑猫投诉，走 Web/Jina（无 opencli 后端）
+
+entities:
+  - id: myproduct
+    type: self
+    aliases: ["星海手机", "星海Pro", "XingHai"]   # aliases[0] 作主搜索词
+    must_not: ["星海大酒店", "星海广场"]           # 否定词：剔同名歧义
+    crisis_boost: ["退款", "维权", "翻车", "召回", "避雷"]
+
+  - id: rival_a
+    type: competitor                              # MVP 不报，Phase 1 做 SOV
+    aliases: ["竞品A手机"]
