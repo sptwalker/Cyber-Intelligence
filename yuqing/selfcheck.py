@@ -218,6 +218,19 @@ def demo() -> None:
     assert analytics.daily_negative_series(rs, "p") == []      # 空日期不计入
     assert analytics.negative_anomaly(rs, "p")["anomaly"] is False
 
+    # --- Phase 3 ---
+    from . import insights
+    # 18) 老板一句话日报（确定性）+ AI 问答检索命中 + 诉求→需求 + 报告含 backlog 段
+    assert "今日舆情" in insights.oneliner(store, WATCH)
+    qa = insights.ask(store, "发热")
+    assert qa["sources"] and "[来源:" in qa["answer"], qa       # 检索命中且带溯源
+    bl = insights.backlog(store, {"myproduct"})
+    assert any(x["kind"] in ("Bug", "投诉") for x in bl), bl     # w1/h1 → Bug/投诉
+    assert "用户诉求→产品需求" in md                              # 已接入报告
+    # 19) 跨平台事件时间线按时间还原
+    tl = insights.timeline(ms, "退款")
+    assert tl and all(tl[i]["time"] <= tl[i + 1]["time"] for i in range(len(tl) - 1)), tl
+
     print("OK selfcheck —— 整条链跑通：")
     print(f"  去重 clean={n_clean}｜features 全带 evidence 子串｜Top负面={top['native_id']}(risk={top['risk']})")
     print(f"  报告数字与聚合一致、引用校验通过、伪造引用被抓")
@@ -225,6 +238,7 @@ def demo() -> None:
     print(f"  只读看板渲染：健康徽章 + 报告历史 + 负面Top 全部就位")
     print(f"  Phase1：实时预警P0+冷却✓ 静默失败预警✓ 成本熔断✓ 竞品SOV✓ 增量水位✓")
     print(f"  Phase2：ABSA方面级✓ 稳健z-score异常✓ 上升话题✓ 时序看板✓ 分层路由✓")
+    print(f"  Phase3：老板日报✓ AI问答(RAG-lite)✓ 诉求→需求闭环✓ 事件时间线✓")
     print("\n--- 生成的周报（happy path，节选）---\n")
     print(md[:900])
 

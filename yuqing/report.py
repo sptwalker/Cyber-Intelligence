@@ -16,6 +16,7 @@ from typing import Optional
 
 from . import analytics
 from . import health
+from . import insights
 
 _CITE = re.compile(r"\[来源:([0-9a-f]{6,16})\]")
 
@@ -163,6 +164,15 @@ def build_report(store, watch: dict, *, run_id: str, now: str,
             f"| {r['name']} | {'自有' if r['type']=='self' else '竞品'} | {r['mentions']} "
             f"| {r['sov']:.0%} | {r['nsr']:+.2f} |\n" for r in rows)
                      + "\n> SOV=声量份额，NSR=(正-负)/总；均为**公开抽样口径**，仅供相对对比。\n")
+
+    self_ids = {e["id"] for e in watch["entities"] if e.get("type", "self") == "self"}
+    bl = insights.backlog(store, self_ids)
+    if bl:
+        parts.append("## 用户诉求→产品需求（待人工确认，不自动建工单）\n"
+                     "| 类型 | 话题 | 声量 | 热度 | 代表 |\n|---|---|---|---|---|\n"
+                     + "".join(
+            f"| {x['kind']} | {x['topic']} | {x['count']} | {x['heat']} | "
+            f"[原帖]({x['url'] or '#'}) {_cite(x['sample'])} |\n" for x in bl[:8]))
 
     parts.append("\n---\n*附：情绪判定含中文反讽误判风险，关键负面结论建议人工抽检。*")
     md = "\n".join(parts)

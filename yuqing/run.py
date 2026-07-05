@@ -14,6 +14,7 @@ from . import load_watch
 from .alerts import dispatch as dispatch_alerts
 from .analyze import analyze_pending
 from .collect import collect_all
+from .insights import oneliner
 from .report import build_report, push_feishu, validate_citations
 from .store import Store
 
@@ -36,6 +37,7 @@ def main(watch_path: str = "watch.yaml", db: str = "yuqing.db") -> int:
             print(f"[!] 引用校验失败，存在不存在的 doc_id：{bad}", file=sys.stderr)
             return 2
         pushed = push_feishu(md)
+        push_feishu(oneliner(store, watch), title="老板一句话日报")   # IM 群每日简讯
         print(f"采集健康：{health_by_platform}｜新分析 {n} 条｜实时预警 {len(alerts)} 条｜飞书推送：{pushed}")
         print(f"报告已存库 run_id={run_id}，引用校验通过。")
         return 0
