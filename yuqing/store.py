@@ -103,6 +103,12 @@ CREATE TABLE IF NOT EXISTS run_log (
 CREATE TABLE IF NOT EXISTS review (
     doc_id TEXT, kind TEXT, verdict TEXT, note TEXT, ts TEXT
 );
+CREATE TABLE IF NOT EXISTS watermark (
+    entity_id TEXT, platform TEXT, entry TEXT, last_ts TEXT,
+    PRIMARY KEY(entity_id, platform, entry)
+);
+CREATE TABLE IF NOT EXISTS alerts (cluster_key TEXT, level TEXT, doc_id TEXT, summary TEXT, ts TEXT);
+CREATE TABLE IF NOT EXISTS usage (day TEXT PRIMARY KEY, calls INTEGER, tokens INTEGER);
 """
 
 
@@ -179,6 +185,37 @@ class Store:
 
     def save_report(self, run_id, created_at, markdown) -> None:
         self.conn.execute("INSERT OR REPLACE INTO reports VALUES(?,?,?)", (run_id, created_at, markdown))
+
+    # --- Phase 1: 增量水位 / 预警冷却 / 成本配额 ---
+    def get_watermark(self, entity_id: str, platform: str, entry: str = "search") -> Optional[str]:
+        r = self.conn.execute(
+            "SELECT last_ts FROM watermark WHERE entity_id=? AND platform=? AND entry=?",
+            (entity_id, platform, entry)).fetchone()
+        return r["last_ts"] if r else None
+
+    def set_watermark(self, entity_id: str, platform: str, entry: str, last_ts: str) -> None:
+        self.conn.execute("INSERT OR REPLACE INTO watermark VALUES(?,?,?,?)",
+                          (entity_id, platform, entry, last_ts))
+
+    def recent_alert(self, cluster_key: str, since_ts: str) -> bool:
+        """冷却判定：该事件簇在 since_ts 之后是否已告警过。"""
+        return self.conn.execute(
+            "SELECT 1 FROM alerts WHERE cluster_key=? AND ts>=? LIMIT 1",
+            (cluster_key, since_ts)).fetchone() is not None
+
+    def record_alert(self, cluster_key: str, level: str, doc_id: str, summary: str, ts: str) -> None:
+        self.conn.execute("INSERT INTO alerts VALUES(?,?,?,?,?)",
+                          (cluster_key, level, doc_id, summary, ts))
+
+    def add_usage(self, day: str, calls: int, tokens: int) -> None:
+        self.conn.execute(
+            "INSERT INTO usage(day,calls,tokens) VALUES(?,?,?) "
+            "ON CONFLICT(day) DO UPDATE SET calls=calls+?, tokens=tokens+?",
+            (day, calls, tokens, calls, tokens))
+
+    def usage_today(self, day: str) -> tuple[int, int]:
+        r = self.conn.execute("SELECT calls,tokens FROM usage WHERE day=?", (day,)).fetchone()
+        return (r["calls"], r["tokens"]) if r else (0, 0)
 
     def commit(self):
         self.conn.commit()

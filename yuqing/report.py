@@ -45,6 +45,26 @@ def _cite(doc_id: str) -> str:
     return f"[来源:{doc_id}]"
 
 
+def sov(store, watch: dict) -> list[dict]:
+    """竞品对标：声量份额(SOV) + 净情绪(NSR=(正-负)/总)。自有 + 竞品同口径。"""
+    rows = [dict(r) for r in store.joined()]
+    per: dict[str, dict] = {}
+    for r in rows:
+        d = per.setdefault(r["entity_id"], {"n": 0, "pos": 0, "neg": 0})
+        d["n"] += 1
+        d["pos"] += r["polarity"] == "pos"
+        d["neg"] += r["polarity"] == "neg"
+    total = sum(d["n"] for d in per.values()) or 1
+    out = []
+    for ent in watch["entities"]:
+        d = per.get(ent["id"], {"n": 0, "pos": 0, "neg": 0})
+        out.append({"id": ent["id"], "name": ent.get("aliases", [ent["id"]])[0],
+                    "type": ent.get("type", "self"), "mentions": d["n"],
+                    "sov": d["n"] / total,
+                    "nsr": ((d["pos"] - d["neg"]) / d["n"]) if d["n"] else 0.0})
+    return sorted(out, key=lambda x: x["mentions"], reverse=True)
+
+
 def _prose_stub(entity_name: str, m: dict) -> str:
     """离线成文：完全由数字派生，天然不编造。Claude 路径见 _prose_claude。"""
     lines = [f"本周共采集 **{entity_name}** 相关内容 {m['n_total']} 条，"
@@ -115,6 +135,14 @@ def build_report(store, watch: dict, *, run_id: str, now: str,
                 f"| {i} | {r['platform']} | {r['risk']} | {(r['summary'] or '')[:30]} | "
                 f"[原帖]({r['url'] or '#'}) {_cite(r['doc_id'])} |\n"
                 for i, r in enumerate(m["top_neg"], 1)))
+
+    if any(e.get("type") == "competitor" for e in watch["entities"]):
+        rows = sov(store, watch)
+        parts.append("## 竞品对标（SOV / 净情绪）\n| 对象 | 类型 | 声量 | 份额SOV | 净情绪NSR |\n|---|---|---|---|---|\n"
+                     + "".join(
+            f"| {r['name']} | {'自有' if r['type']=='self' else '竞品'} | {r['mentions']} "
+            f"| {r['sov']:.0%} | {r['nsr']:+.2f} |\n" for r in rows)
+                     + "\n> SOV=声量份额，NSR=(正-负)/总；均为**公开抽样口径**，仅供相对对比。\n")
 
     parts.append("\n---\n*附：情绪判定含中文反讽误判风险，关键负面结论建议人工抽检。*")
     md = "\n".join(parts)

@@ -116,11 +116,79 @@ def demo() -> None:
     idx2 = dashboard.render_index(store2)
     assert 'class="badge fail"' in idx2 and "采集异常" in idx2      # 断链→红条徽章
 
+    # --- Phase 1 ---
+    from . import alerts, budget
+    from .report import sov as sov_fn
+    import os as _os
+
+    # 10) 实时预警：P0 触发 + 同簇冷却
+    a1 = alerts.evaluate(store, now="2026-07-06T10:00:00+08:00", health_by_platform=hbp)
+    assert any(x["level"] == "P0" and x["kind"] == "risk" for x in a1), a1
+    a2 = alerts.evaluate(store, now="2026-07-06T10:05:00+08:00", health_by_platform=hbp)
+    assert a2 == [], f"同簇应被冷却: {a2}"
+    ah = alerts.evaluate(store2, now="2026-07-06T10:00:00+08:00", health_by_platform=hbp2)
+    assert any(x["kind"] == "health" and "heimao" in x["summary"] for x in ah), "缺静默失败预警"
+
+    # 11) 成本配额熔断
+    _os.environ["YUQING_MAX_CALLS"] = "1"
+    bs = Store(":memory:")
+    budget.guard(bs, "2026-07-06")
+    try:
+        budget.guard(bs, "2026-07-06"); raise AssertionError("应已熔断")
+    except budget.BudgetExceeded:
+        pass
+    _os.environ.pop("YUQING_MAX_CALLS")
+
+    # 12) 竞品 SOV：份额和为 1，竞品声量正确
+    sw = {"platforms": ["weibo"], "entities": [
+        {"id": "mine", "type": "self", "aliases": ["本品"]},
+        {"id": "rival", "type": "competitor", "aliases": ["竞品"]}]}
+    sf = {"weibo": {"mine": [{"id": "m1", "text": "本品真香好用推荐"}],
+                    "rival": [{"id": "r1", "text": "竞品垃圾避雷"}, {"id": "r2", "text": "竞品还行"}]}}
+    ss = Store(":memory:")
+    collect_all(ss, sw, run_id="s", now="2026-07-06T10:00:00+08:00", fixtures=sf)
+    analyze_pending(ss, use_claude=False)
+    sv = {x["id"]: x for x in sov_fn(ss, sw)}
+    assert abs(sum(x["sov"] for x in sv.values()) - 1.0) < 1e-6, "SOV 份额和应为1"
+    assert sv["rival"]["mentions"] == 2 and sv["mine"]["mentions"] == 1
+
+    # 12b) 竞品高风险负面不触发预警（self_entities 过滤，竞品的锅≠自家危机）
+    cf = {"weibo": {"rival": [{"id": "c1", "text": "竞品手机爆炸维权退款曝光避雷",
+          "user": {"nickname": "大V", "followers": "5000000"},
+          "like_count": "9000", "comment_count": "2000", "repost_count": "3000"}]}}
+    cs = Store(":memory:")
+    collect_all(cs, sw, run_id="c", now="2026-07-06T10:00:00+08:00", fixtures=cf)
+    analyze_pending(cs, use_claude=False)
+    assert alerts.evaluate(cs, now="2026-07-06T10:00:00+08:00", self_entities=None), "对照：无过滤应有预警"
+    assert alerts.evaluate(cs, now="2026-07-06T10:00:00+08:00", self_entities={"mine"}) == [], \
+        "竞品负面不应告警"
+
+    # 13) 增量水位：早于水位的内容被跳过，仅入更新的
+    ws = Store(":memory:")
+    collect_platform(ws, run_id="w1", entity_id="e", platform="weibo", keyword="k",
+                     now="t", fixture=[{"id": "n1", "text": "x", "created_at": "2026-07-05T00:00:00"}])
+    n_ins, _ = collect_platform(ws, run_id="w2", entity_id="e", platform="weibo", keyword="k", now="t",
+        fixture=[{"id": "n0", "text": "old", "created_at": "2026-07-04T00:00:00"},
+                 {"id": "n2", "text": "new", "created_at": "2026-07-06T00:00:00"}])
+    assert n_ins == 1, f"只应入更新的1条(早于水位跳过)，实际 {n_ins}"
+
+    # 13b) 非 ISO/数字时间戳不污染水位、不崩（防静默漏抓）
+    ws2 = Store(":memory:")
+    ni, _ = collect_platform(ws2, run_id="a", entity_id="e", platform="weibo", keyword="k", now="t",
+        fixture=[{"id": "x1", "text": "a", "created_at": "刚刚"},
+                 {"id": "x2", "text": "b", "created_at": 1720000000},
+                 {"id": "x3", "text": "c", "created_at": "2026-07-05T00:00:00"}])
+    assert ni == 3, f"非ISO/数字ts应全部入库不崩，实际 {ni}"
+    ni2, _ = collect_platform(ws2, run_id="b", entity_id="e", platform="weibo", keyword="k", now="t",
+        fixture=[{"id": "x4", "text": "d", "created_at": "2026-07-06T00:00:00"}])
+    assert ni2 == 1, f"ISO 新内容应入库(未被非ISO污染)，实际 {ni2}"
+
     print("OK selfcheck —— 整条链跑通：")
     print(f"  去重 clean={n_clean}｜features 全带 evidence 子串｜Top负面={top['native_id']}(risk={top['risk']})")
     print(f"  报告数字与 metrics 一致、引用校验通过、伪造引用被抓")
     print(f"  静默失败三态：{hbp2} → 红条已挂")
     print(f"  只读看板渲染：健康徽章 + 报告历史 + 负面Top 全部就位")
+    print(f"  Phase1：实时预警P0+冷却✓ 静默失败预警✓ 成本熔断✓ 竞品SOV✓ 增量水位✓")
     print("\n--- 生成的周报（happy path，节选）---\n")
     print(md[:900])
 

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import datetime as _dt
 from typing import Optional
 
 from .score import Weights, risk_score
@@ -124,7 +125,8 @@ def _validate_evidence(feat: dict, text: str) -> dict:
     return feat
 
 
-def analyze_pending(store, weights: Optional[Weights] = None, *, use_claude: Optional[bool] = None) -> int:
+def analyze_pending(store, weights: Optional[Weights] = None, *, use_claude: Optional[bool] = None,
+                    now: Optional[str] = None) -> int:
     """对所有缺 features 的 clean 帖做抽取并落库。返回处理条数。"""
     weights = weights or Weights()
     rows = store.clean_missing_features()
@@ -134,6 +136,13 @@ def analyze_pending(store, weights: Optional[Weights] = None, *, use_claude: Opt
 
     if use_claude is None:
         use_claude = bool(os.getenv("ANTHROPIC_API_KEY"))
+    if use_claude:                       # 成本配额熔断：超限则降级为规则抽取，不烧钱
+        from .budget import guard, BudgetExceeded
+        day = (now or _dt.datetime.now().astimezone().isoformat())[:10]
+        try:
+            guard(store, day, add_calls=1, add_tokens=len(docs) * 1200)
+        except BudgetExceeded:
+            use_claude = False
     feats = claude_extract(docs) if use_claude else {}
 
     for r in rows:

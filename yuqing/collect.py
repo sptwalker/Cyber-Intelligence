@@ -14,7 +14,7 @@ import re
 import subprocess
 import time
 from urllib.parse import quote
-from typing import Iterable, Optional
+from typing import Optional
 
 from .store import CleanDoc, Store
 from . import health
@@ -24,6 +24,7 @@ OPENCLI_SITE = {"weibo": "weibo", "zhihu": "zhihu", "douyin": "douyin",
                 "xiaohongshu": "xiaohongshu", "bilibili": "bilibili"}
 
 _COMPLAINT_TRIGGERS = ["投诉", "维权", "退款", "退货", "赔偿", "曝光", "避雷", "翻车", "召回", "欺诈"]
+_ISO_TS = re.compile(r"^\d{4}-\d{2}-\d{2}")   # 仅 ISO 日期串可参与水位比较
 
 
 def _pick(d: dict, *keys, default=None):
@@ -62,7 +63,7 @@ def normalize(platform: str, entity_id: str, item: dict, backend: str, fetched_a
         likes=_to_int(_pick(item, "like_count", "liked_count", "digg_count", "likes", default=0)),
         comments=_to_int(_pick(item, "comment_count", "comments", "comment", default=0)),
         reposts=_to_int(_pick(item, "repost_count", "share_count", "forward_count", default=0)),
-        publish_ts=_pick(item, "created_at", "time", "publish_time", "date", default=""),
+        publish_ts=str(_pick(item, "created_at", "time", "publish_time", "date", default="")),
         url=_pick(item, "url", "link", "note_url", default=""),
         tags=item.get("tags") or item.get("tag_list") or [],
         is_complaint=is_complaint, backend=backend, fetched_at=fetched_at,
@@ -82,6 +83,17 @@ def _fetch_opencli(platform: str, keyword: str, limit: int) -> list[dict]:
     data = json.loads(out.stdout or "[]")
     items = data if isinstance(data, list) else data.get("items") or data.get("data") or []
     return items[:limit]
+
+
+def _fetch_opencli_userposts(site: str, user: str, limit: int) -> list[dict]:
+    """跟踪指定 KOL/官号主页（user-posts 入口）。"""
+    out = subprocess.run(
+        ["opencli", site, "user-posts", user, "-f", "json"],
+        capture_output=True, encoding="utf-8", errors="replace", timeout=120)
+    if out.returncode != 0:
+        raise RuntimeError(f"opencli {site} user-posts 失败: {out.stderr[:200]}")
+    data = json.loads(out.stdout or "[]")
+    return (data if isinstance(data, list) else data.get("items") or data.get("data") or [])[:limit]
 
 
 # --- 黑猫投诉：登录态浏览器桥（tousu.sina.com.cn 搜索页需微博登录 + 站内 JS 签名，
@@ -148,11 +160,14 @@ def _fetch_heimao(keyword: str, limit: int, *, pages: int = 1) -> list[dict]:
 
 def collect_platform(store: Store, *, run_id: str, entity_id: str, platform: str, keyword: str,
                      now: str, limit: int = 50, fixture: Optional[list[dict]] = None,
-                     backend: str = "opencli") -> tuple[int, str]:
+                     backend: str = "opencli", entry: str = "search",
+                     user: Optional[str] = None) -> tuple[int, str]:
     """采集一个 (实体,平台)。返回 (新入库条数, 健康三态)。fixture 非空则走离线。"""
     try:
         if fixture is not None:
             items = fixture
+        elif entry == "user-posts" and user:
+            items = _fetch_opencli_userposts(OPENCLI_SITE[platform], user, limit)
         elif platform == "heimao":
             items = _fetch_heimao(keyword, limit)      # 登录态浏览器桥
         else:
@@ -162,14 +177,25 @@ def collect_platform(store: Store, *, run_id: str, entity_id: str, platform: str
     except Exception as e:                       # 采集失败 ≠ 无负面，单列失败信号
         items, status, note = [], "error", str(e)[:200]
 
+    # 增量水位：只用 ISO 日期串比较，跳过严格早于水位的内容（幂等去重仍由 UNIQUE 兜底，
+    # 宁可重抓不可漏；非 ISO/数字时间戳一律不参与水位，避免污染导致静默漏抓）。
+    watermark = store.get_watermark(entity_id, platform, entry)
+    max_ts = watermark or ""
     inserted = 0
     for it in items:
         doc = normalize(platform, entity_id, it, backend, now)
         if not doc.native_id:
             continue
+        ts = doc.publish_ts if _ISO_TS.match(doc.publish_ts) else ""
+        if watermark and ts and ts < watermark:
+            continue                             # 严格早于水位，跳过
+        if ts > max_ts:
+            max_ts = ts
         store.add_raw(doc, it)
         if store.add_clean(doc):                 # True=新插入（UNIQUE 去重）
             inserted += 1
+    if max_ts and max_ts != watermark:
+        store.set_watermark(entity_id, platform, entry, max_ts)
 
     state = health.assess(store, platform=platform, entity_id=entity_id,
                           n_fetched=len(items), status=status)
@@ -185,13 +211,19 @@ def collect_all(store: Store, watch: dict, *, run_id: str, now: str,
     health_by_platform: dict[str, str] = {}
     for ent in watch["entities"]:
         eid = ent["id"]
+        kw = ent.get("aliases", [ent["id"]])[0]
         for platform in watch["platforms"]:
-            kw = ent.get("aliases", [ent["id"]])[0]
             fx = (fixtures.get(platform) or {}).get(eid) if fixtures else None
             _, state = collect_platform(store, run_id=run_id, entity_id=eid, platform=platform,
                                         keyword=kw, now=now, fixture=fx)
             # 一个平台多实体时取最差态
             health_by_platform[platform] = health.worst(health_by_platform.get(platform), state)
+        # user-posts 入口：跟踪指定 KOL/官号（track_users: ["weibo:12345", ...]）
+        for spec in ent.get("track_users", []):
+            site, _, uid = spec.partition(":")
+            if site in OPENCLI_SITE and uid:
+                collect_platform(store, run_id=run_id, entity_id=eid, platform=site,
+                                 keyword=kw, now=now, entry="user-posts", user=uid)
     return health_by_platform
 
 
