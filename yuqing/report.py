@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """报告层：数字代码注入 + LLM 只写措辞 + 引用校验器 + 飞书推送。
 
-可信度命门（立项规划）：所有数值/链接由代码从 metrics 注入，Claude 只写
+可信度命门（立项规划）：所有数值/链接由代码从聚合(aggregate)结果注入，Claude 只写
 执行摘要/话题点评/行动建议三段散文；每条结论标 [来源:doc_id]；生成后
 引用校验器逐一比对 doc_id 真实性，不存在即判不合格。
 """
@@ -14,6 +14,7 @@ import re
 import urllib.request
 from typing import Optional
 
+from . import analytics
 from . import health
 
 _CITE = re.compile(r"\[来源:([0-9a-f]{6,16})\]")
@@ -82,7 +83,7 @@ def _prose_stub(entity_name: str, m: dict) -> str:
 
 
 def _prose_claude(entity_name: str, m: dict, model: str = "claude-sonnet-5") -> str:
-    """Claude 只写措辞：禁止输出 metrics 外的数字，只能引用给定 evidence 的 doc_id。"""
+    """Claude 只写措辞：禁止输出聚合结果外的数字，只能引用给定 evidence 的 doc_id。"""
     import anthropic
 
     evidence = [{"doc_id": r["doc_id"], "platform": r["platform"], "summary": r["summary"],
@@ -135,6 +136,25 @@ def build_report(store, watch: dict, *, run_id: str, now: str,
                 f"| {i} | {r['platform']} | {r['risk']} | {(r['summary'] or '')[:30]} | "
                 f"[原帖]({r['url'] or '#'}) {_cite(r['doc_id'])} |\n"
                 for i, r in enumerate(m["top_neg"], 1)))
+
+        anom = analytics.negative_anomaly(store, ent["id"])
+        if anom["anomaly"]:
+            parts.append(f"\n> ⚠️ 负面放量异常：{anom['day']} 共 {anom['count']} 条"
+                         f"（稳健 z={anom['z']}，显著高于历史基线）\n")
+
+        ab = analytics.aspect_breakdown(store, ent["id"])
+        if ab:
+            parts.append("## 方面级口碑（ABSA）\n| 方面 | 声量 | 负面 | 正面 | 负面占比 |\n|---|---|---|---|---|\n"
+                         + "".join(
+                f"| {a['aspect']} | {a['n']} | {a['neg']} | {a['pos']} | {a['neg_ratio']:.0%} |\n"
+                for a in ab) + "\n> 按负面占比降序，恶化最快的方面排在最前。\n")
+
+        # 上升话题：仅列有历史基线(上期>0)且本期放量的，避免首次运行全部误判为"上升"
+        rt = [x for x in analytics.rising_topics(store, ent["id"], now[:10]) if x["before"] > 0]
+        if rt:
+            parts.append("## 上升话题（环比放量）\n| 话题 | 上期 | 本期 | 增量 |\n|---|---|---|---|\n"
+                         + "".join(f"| {x['topic']} | {x['before']} | {x['after']} | +{x['delta']} |\n"
+                                   for x in rt[:5]) + "\n")
 
     if any(e.get("type") == "competitor" for e in watch["entities"]):
         rows = sov(store, watch)

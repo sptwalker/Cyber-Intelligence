@@ -56,14 +56,26 @@ def render_index(store: Store) -> str:
     banner = ("<p style='color:#cf222e;font-weight:600'>⚠️ 有平台采集异常，下方报告数据可能不全，请人工核查。</p>"
               if any_bad else "")
 
-    # 2) 报告历史
+    # 2) 负面日趋势（按 fetched_at 天，实时算，text bar）
+    trend = conn.execute(
+        "SELECT substr(c.fetched_at,1,10) day, "
+        "SUM(CASE WHEN f.polarity='neg' THEN 1 ELSE 0 END) neg, COUNT(*) total "
+        "FROM clean c JOIN features f USING(doc_id) GROUP BY day ORDER BY day"
+    ).fetchall()
+    peak = max((r["neg"] for r in trend), default=0) or 1
+    trend_rows = "".join(
+        f"<tr><td class=muted>{html.escape(r['day'] or '')}</td><td>{r['neg']}</td>"
+        f"<td>{r['total']}</td><td>{'█' * round(20 * r['neg'] / peak)}</td></tr>"
+        for r in trend) or "<tr><td colspan=4 class=muted>暂无数据</td></tr>"
+
+    # 3) 报告历史
     report_rows = "".join(
         f"<tr><td><a href='/report?run_id={html.escape(r['run_id'])}'>{html.escape(r['run_id'])}</a></td>"
         f"<td class=muted>{html.escape(r['created_at'])}</td></tr>"
         for r in conn.execute("SELECT run_id,created_at FROM reports ORDER BY created_at DESC LIMIT 50")
     ) or "<tr><td colspan=2 class=muted>暂无报告</td></tr>"
 
-    # 3) 负面 Top（跨全部实体，按风险分）
+    # 4) 负面 Top（跨全部实体，按风险分）
     neg_rows = "".join(
         f"<tr><td>{i}</td><td>{html.escape(r['platform'])}</td><td>{r['risk']}</td>"
         f"<td>{html.escape((r['text'] or '')[:50])}</td>"
@@ -79,6 +91,8 @@ def render_index(store: Store) -> str:
         "<h2>采集健康（各平台最近一次）</h2>"
         "<table><tr><th>平台</th><th>状态</th><th>条数</th><th>时间</th><th>备注</th></tr>"
         + health_rows + "</table>"
+        "<h2>负面日趋势</h2><table><tr><th>日期</th><th>负面</th><th>总量</th><th></th></tr>"
+        + trend_rows + "</table>"
         "<h2>报告历史</h2><table><tr><th>run_id</th><th>生成时间</th></tr>" + report_rows + "</table>"
         "<h2>负面 Top（按风险分）</h2>"
         "<table><tr><th>#</th><th>平台</th><th>风险</th><th>摘要</th><th>溯源</th></tr>"

@@ -80,10 +80,10 @@ def demo() -> None:
         "SELECT risk FROM features WHERE doc_id=?", (doc_id_for("heimao", "h1"),)).fetchone()[0]
     assert h1_risk > 0, f"黑猫零互动投诉被归零: {h1_risk}"
 
-    # 5) 报告：数字来自 metrics、引用全部有效
+    # 5) 报告：数字来自聚合、引用全部有效
     md = build_report(store, WATCH, run_id="r1", now="2026-07-06T10:00:00+08:00",
                       health_by_platform=hbp, use_claude=False)
-    assert f"| 总声量 | {m['n_total']} |" in md, "报告数字与 metrics 不一致"
+    assert f"| 总声量 | {m['n_total']} |" in md, "报告数字与聚合不一致"
     assert "抽样、非全量" in md, "缺抽样诚实声明"
     assert validate_citations(md, store) == [], "存在悬空引用"
     assert build_report.__doc__  # sanity
@@ -183,12 +183,48 @@ def demo() -> None:
         fixture=[{"id": "x4", "text": "d", "created_at": "2026-07-06T00:00:00"}])
     assert ni2 == 1, f"ISO 新内容应入库(未被非ISO污染)，实际 {ni2}"
 
+    # --- Phase 2 ---
+    from . import analytics
+
+    # 14) ABSA 方面级：主 store 命中 性能/服务
+    aspects = {a["aspect"] for a in analytics.aspect_breakdown(store, "myproduct")}
+    assert {"性能", "服务"} <= aspects, aspects
+
+    # 15) 看板负面日趋势（实时算，无需快照表）
+    idx3 = dashboard.render_index(store)
+    assert "负面日趋势" in idx3 and "█" in idx3, "看板缺时序趋势"
+
+    # 16) 多天：稳健异常(带绝对下限) + 上升话题
+    ms = Store(":memory:")
+    for day, ids in [("2026-07-01", ["a1"]), ("2026-07-02", ["b1"]),
+                     ("2026-07-05", ["c1", "c2", "c3", "c4", "c5", "c6"])]:
+        fx = [{"id": i, "text": "退款维权避雷垃圾差评", "created_at": day + "T00:00:00"} for i in ids]
+        collect_platform(ms, run_id=day, entity_id="p", platform="weibo", keyword="k",
+                         now=day + "T00:00:00", fixture=fx)
+    analyze_pending(ms, use_claude=False)
+    anom = analytics.negative_anomaly(ms, "p")
+    assert anom["anomaly"] and anom["count"] == 6, anom            # 07-05 放量6 vs 历史1,1
+    rt = analytics.rising_topics(ms, "p", "2026-07-05")
+    assert rt and rt[0]["delta"] > 0, rt
+
+    # 17) 健壮性：signals/aspects=null 不崩；空 fetched_at 不污染"最新一天"
+    from .store import CleanDoc
+    rs = Store(":memory:")
+    doc = CleanDoc.build(platform="weibo", entity_id="p", native_id="n", text="x", fetched_at="")
+    rs.add_clean(doc)
+    rs.add_feature(doc.doc_id, {"polarity": "neg", "signals": {"aspects": None}})
+    rs.commit()
+    assert analytics.aspect_breakdown(rs, "p") == []           # aspects=null 被跳，不崩
+    assert analytics.daily_negative_series(rs, "p") == []      # 空日期不计入
+    assert analytics.negative_anomaly(rs, "p")["anomaly"] is False
+
     print("OK selfcheck —— 整条链跑通：")
     print(f"  去重 clean={n_clean}｜features 全带 evidence 子串｜Top负面={top['native_id']}(risk={top['risk']})")
-    print(f"  报告数字与 metrics 一致、引用校验通过、伪造引用被抓")
+    print(f"  报告数字与聚合一致、引用校验通过、伪造引用被抓")
     print(f"  静默失败三态：{hbp2} → 红条已挂")
     print(f"  只读看板渲染：健康徽章 + 报告历史 + 负面Top 全部就位")
     print(f"  Phase1：实时预警P0+冷却✓ 静默失败预警✓ 成本熔断✓ 竞品SOV✓ 增量水位✓")
+    print(f"  Phase2：ABSA方面级✓ 稳健z-score异常✓ 上升话题✓ 时序看板✓ 分层路由✓")
     print("\n--- 生成的周报（happy path，节选）---\n")
     print(md[:900])
 

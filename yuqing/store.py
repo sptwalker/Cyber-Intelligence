@@ -2,7 +2,7 @@
 """SQLite 分层存储 + 统一 doc_id 契约。
 
 设计要点（来自立项规划）：
-- doc_id 从 raw 生成后贯穿 clean→features→metrics→report 全程不变，可反查原始 payload。
+- doc_id 从 raw 生成后贯穿 clean→features→report 全程不变，可反查原始 payload。
 - 硬去重靠 UNIQUE(platform, native_id) + INSERT OR IGNORE，幂等白送。
 - content_cluster_id 软去重在入库时算一次，下游只消费不再重算。
 - raw 层 append-only，永不覆盖——采集是最不可重放的一环。
@@ -90,10 +90,6 @@ CREATE TABLE IF NOT EXISTS features (
     is_ironic INTEGER, is_spam INTEGER, topic_label TEXT, summary TEXT,
     evidence TEXT, signals TEXT, risk REAL,
     FOREIGN KEY(doc_id) REFERENCES clean(doc_id)
-);
-CREATE TABLE IF NOT EXISTS metrics (
-    run_id TEXT, day TEXT, entity_id TEXT, platform TEXT,
-    n_total INTEGER, n_neg INTEGER, neg_ratio REAL, PRIMARY KEY(run_id, day, entity_id, platform)
 );
 CREATE TABLE IF NOT EXISTS reports (run_id TEXT PRIMARY KEY, created_at TEXT, markdown TEXT);
 CREATE TABLE IF NOT EXISTS run_log (
