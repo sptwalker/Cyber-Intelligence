@@ -82,7 +82,7 @@ def normalize(platform: str, entity_id: str, item: dict, backend: str, fetched_a
         likes=_to_int(_pick(item, "like_count", "liked_count", "digg_count", "votes", "likes", default=0)),
         comments=_to_int(_pick(item, "comment_count", "comments", "comment", default=0)),
         reposts=_to_int(_pick(item, "repost_count", "share_count", "forward_count", default=0)),
-        publish_ts=str(_pick(item, "created_at", "time", "publish_time", "date", default="")),
+        publish_ts=str(_pick(item, "created_at", "time", "publish_time", "date", "published_at", default="")),
         url=_pick(item, "url", "link", "note_url", default=""),
         tags=item.get("tags") or item.get("tag_list") or [],
         is_complaint=is_complaint, backend=backend, fetched_at=fetched_at,
@@ -134,23 +134,33 @@ def _fetch_opencli_userposts(site: str, user: str, limit: int) -> list[dict]:
 # --- 黑猫投诉：登录态浏览器桥（tousu.sina.com.cn 搜索页需微博登录 + 站内 JS 签名，
 #     只能让已登录的真实浏览器自己渲染，再从 markdown 抓投诉详情链接）---
 
-# 锚定"域名 + ≥9 位投诉 id"，对页面 DOM/路径变化鲁棒；id 即天然去重键。
-_HEIMAO_LINK = re.compile(
-    r"\[([^\]]{2,}?)\]\((https://tousu\.sina\.com\.cn/[^)]*?(\d{9,})[^)]*)\)")
+# 锚定投诉详情链接里的 ≥9 位 id。真实 markdown 里 URL 是协议相对(//tousu...)且带 query，
+# 链接文字多行含转义括号——故只锚 URL+id，文字取链接前一段清洗后的内容。
+_HEIMAO_LINK = re.compile(r"(?:https?:)?//tousu\.sina\.com\.cn/complaint/view/(\d{6,})")
 
 
 def parse_heimao_markdown(md: str) -> list[dict]:
-    """从 opencli browser extract 的 markdown 里抽投诉条目（按详情链接锚定，含去重）。
+    """从 opencli browser extract 的 markdown 里抽投诉条目（按详情链接 id 锚定，含去重）。
 
     返回与 normalize() 兼容的 item：{id, text, url}。纯函数，可离线测。
     """
+    md = md or ""
     seen: set[str] = set()
     items: list[dict] = []
-    for title, url, cid in _HEIMAO_LINK.findall(md or ""):
+    prev_end = 0
+    for m in _HEIMAO_LINK.finditer(md):
+        cid = m.group(1)
+        seg = md[prev_end:m.start()]              # 该条投诉文字（到本链接锚为止）
+        prev_end = m.end()
         if cid in seen:
             continue
         seen.add(cid)
-        items.append({"id": cid, "text": title.strip(), "url": url})
+        text = seg.replace("\\n", " ").replace("\\", "")     # 去转义(\n/\[)再清 markdown 噪声
+        text = re.sub(r"[\n\r]+", " ", text)
+        text = re.sub(r"[\[\]()*#>-]", " ", text)
+        text = " ".join(text.split())[-140:].strip()
+        items.append({"id": cid, "text": text or f"投诉{cid}",
+                      "url": f"https://tousu.sina.com.cn/complaint/view/{cid}/"})
     return items
 
 
@@ -161,6 +171,15 @@ def _opencli_browser(session: str, *args: str, timeout: int = 60) -> str:
     if out.returncode != 0:
         raise RuntimeError(f"opencli browser {' '.join(args)[:40]} 失败: {(out.stderr or '')[:200]}")
     return out.stdout or ""
+
+
+def _heimao_is_login_wall(md: str) -> bool:
+    """extract 无投诉链接时，判断是"登录墙(真失败)"还是"已登录但该词无投诉(正常空)"。
+
+    可靠信号：已登录页含"退出"(logout)链接；未登录则无。登录模态文字(请直接登录/换个账号登录)
+    在页面 DOM 里恒存在(隐藏)，不可用作判据。
+    """
+    return "退出" not in (md or "")
 
 
 def _fetch_heimao(keyword: str, limit: int, *, pages: int = 1) -> list[dict]:
@@ -175,6 +194,7 @@ def _fetch_heimao(keyword: str, limit: int, *, pages: int = 1) -> list[dict]:
     session = os.getenv("YUQING_OPENCLI_SESSION", "yuqing")
     items: list[dict] = []
     seen: set[str] = set()
+    md = ""
     for page in range(1, pages + 1):
         # 注意：URL 里的 & 在 Windows 上会被 opencli.CMD 的 cmd.exe 当命令分隔符（'page' not found）。
         # 第 1 页不带 &page（tousu 默认第一页）；翻页(page>1)属 Phase 1+，届时需处理 & 转义。
@@ -194,6 +214,9 @@ def _fetch_heimao(keyword: str, limit: int, *, pages: int = 1) -> list[dict]:
                 items.append(it)
         if len(items) >= limit:
             break
+    # 无投诉时区分：登录墙(cookie失效)→raise→健康fail；已登录但该词无投诉→正常空(出海品牌黑猫常为0)
+    if not items and _heimao_is_login_wall(md):
+        raise RuntimeError("黑猫登录态失效（tousu.sina.com.cn 出现登录墙），请重新登录")
     return items[:limit]
 
 
@@ -257,6 +280,10 @@ def collect_platform(store: Store, *, run_id: str, entity_id: str, platform: str
 
     state = health.assess(store, platform=platform, entity_id=entity_id,
                           n_fetched=len(items), status=status)
+    # 黑猫：登录正常但该词无投诉 = 正常空（出海品牌黑猫常为0）。登录墙会 raise→status=error→fail，
+    # 所以这里 status==ok 的空一定是"真无投诉"，不判 fail（否则每次都误红条）。
+    if platform == "heimao" and status == "ok" and len(items) == 0:
+        state = "ok"
     # 抓到了但一条都解析不出 → 多半平台字段格式变了，绝不能顶着 ok 静默丢数据
     if status == "ok" and len(items) > 0 and n_valid == 0:
         state = "suspect"
@@ -303,18 +330,19 @@ if __name__ == "__main__":
                   backend="opencli", fetched_at="2026-07-06T10:00:00+08:00")
     assert d.doc_id and d.is_complaint and d.author_followers == 12000 and d.likes == 3000
 
-    # 黑猫 markdown 解析：按详情链接锚定 + 去重（模拟 extract 输出）
+    # 黑猫 markdown 解析：真实格式=协议相对URL + 多行含转义括号的文字 + 去重
     sample = (
-        "### 投诉列表\n"
-        "* [星海手机屏幕碎裂要求退款商家拒绝](https://tousu.sina.com.cn/complaint/view/17359912345/)\n"
-        "  投诉对象：星海科技 进度：处理中\n"
-        "* [购买星海Pro七天无理由退货被拒](https://tousu.sina.com.cn/complaint/view/17359988888/)\n"
-        "* [重复链接应被去重](https://tousu.sina.com.cn/complaint/view/17359912345/)\n"
-        "* [无关导航](https://tousu.sina.com.cn/index/index/)\n"   # 无 id → 不计
+        "投诉列表\n"
+        "-   \\[投诉对象\\]星海科技\n-   \\[投诉要求\\]屏幕碎裂要求退款\n\n"
+        "](//tousu.sina.com.cn/complaint/view/17359912345/?sld=abc)\n"
+        "-   \\[投诉要求\\]七天无理由退货被拒\n\n](//tousu.sina.com.cn/complaint/view/17359988888/?sld=x)\n"
+        "重复\n\n](//tousu.sina.com.cn/complaint/view/17359912345/)\n"        # 去重
+        "导航](//tousu.sina.com.cn/index/index/)\n"                          # 无 view id → 不计
     )
     parsed = parse_heimao_markdown(sample)
-    assert len(parsed) == 2, parsed                       # 去重 + 过滤无 id
+    assert len(parsed) == 2, parsed                       # 去重 + 过滤非投诉链接
     assert parsed[0]["id"] == "17359912345" and "退款" in parsed[0]["text"]
+    assert parsed[0]["url"] == "https://tousu.sina.com.cn/complaint/view/17359912345/"
     hm = normalize("heimao", "myproduct", parsed[1], backend="opencli-browser",
                    fetched_at="2026-07-06T10:00:00+08:00")
     assert hm.is_complaint and hm.native_id == "17359988888"   # 黑猫恒为投诉
@@ -341,5 +369,13 @@ if __name__ == "__main__":
                                   now="2026-07-06T10:00:00+08:00",
                                   fixture=[{"rank": 1, "title": "无id无url的脏数据"}])
     assert _state == "suspect", f"映射失败应判 suspect，实际 {_state}"
+
+    # 黑猫登录墙检测(靠"退出"链接) + 空结果健康：未登录→wall；已登录无投诉→非wall(正常空→ok)
+    assert _heimao_is_login_wall("新浪微博、博客、邮箱帐号，请直接登录\n[登录](javascript:;)")   # 无"退出"
+    assert not _heimao_is_login_wall("暂无相关投诉\n-   [退出](javascript:;)")               # 有"退出"=已登录
+    hs = _S(":memory:")
+    _n2, _st2 = collect_platform(hs, run_id="r", entity_id="e", platform="heimao", keyword="出海冷门词",
+                                 now="2026-07-06T10:00:00+08:00", fixture=[])   # 空但非登录墙
+    assert _st2 == "ok", f"黑猫已登录但无投诉应 ok(非fail)，实际 {_st2}"
     print("OK collect: doc_id=", d.doc_id, "| 黑猫解析", len(parsed),
-          "条 | 空/失败区分✓ | url派生id✓ | 映射失败保护✓")
+          "条 | 空/失败区分✓ | url派生id✓ | 映射失败保护✓ | 黑猫登录墙vs真空✓")

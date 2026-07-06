@@ -96,14 +96,20 @@ def demo() -> None:
     from . import health
     assert health.banner(hbp) is None, f"happy path 不应有红条: {hbp}"
 
-    # 8) 静默失败：抽掉 heimao fixture → 采集报错 → fail 三态 → 报告红条
-    store2, hbp2 = _run({"weibo": FIXTURES["weibo"], "zhihu": FIXTURES["zhihu"]})  # 无 heimao
-    assert hbp2["heimao"] == "fail", f"应判 fail: {hbp2}"
+    # 8) 静默失败：采集失败的平台 → fail 三态 → 报告红条。
+    #    用"无 opencli 后端平台"确定性触发失败，不驱动实况浏览器（自检须离线可复现）。
+    bw = {"platforms": ["weibo", "brokenplat"],
+          "entities": [{"id": "myproduct", "type": "self", "aliases": ["星海手机", "星海Pro"]}]}
+    store2 = Store(":memory:")
+    hbp2 = collect_all(store2, bw, run_id="r2", now="2026-07-06T10:00:00+08:00",
+                       fixtures={"weibo": FIXTURES["weibo"]})
+    analyze_pending(store2, use_claude=False)
+    assert hbp2["brokenplat"] == "fail", f"无后端平台应 fail: {hbp2}"
     band = health.banner(hbp2)
-    assert band and "heimao" in band and "无数据" in band
-    md2 = build_report(store2, WATCH, run_id="r2", now="2026-07-06T10:00:00+08:00",
+    assert band and "brokenplat" in band and "无数据" in band
+    md2 = build_report(store2, bw, run_id="r2", now="2026-07-06T10:00:00+08:00",
                        health_by_platform=hbp2, use_claude=False)
-    assert band.split("——")[0].strip() in md2 or "数据健康告警" in md2, "报告未打红条"
+    assert "数据健康告警" in md2, "报告未打红条"
 
     # 9) 只读看板渲染：健康三态徽章 + 报告历史 + 负面 Top，且真读到库里数据
     from . import dashboard
@@ -127,7 +133,7 @@ def demo() -> None:
     a2 = alerts.evaluate(store, now="2026-07-06T10:05:00+08:00", health_by_platform=hbp)
     assert a2 == [], f"同簇应被冷却: {a2}"
     ah = alerts.evaluate(store2, now="2026-07-06T10:00:00+08:00", health_by_platform=hbp2)
-    assert any(x["kind"] == "health" and "heimao" in x["summary"] for x in ah), "缺静默失败预警"
+    assert any(x["kind"] == "health" and "brokenplat" in x["summary"] for x in ah), "缺静默失败预警"
 
     # 11) 成本配额熔断
     _os.environ["YUQING_MAX_CALLS"] = "1"
