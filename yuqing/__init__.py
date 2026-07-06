@@ -8,6 +8,15 @@
 
 __version__ = "0.1.0"
 
+# Windows 控制台默认 GBK，编不了 ✓/⚠/🚨/█ 及真实帖子里的 emoji，会让 print 崩溃。
+# 导入本包即把 stdout/stderr 切到 UTF-8（errors=replace 兜底），所有入口无需再手动 -X utf8。
+import sys as _sys
+for _stream in (_sys.stdout, _sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
 
 def load_watch(path: str = "watch.yaml") -> dict:
     """加载监控配置（single source of truth）。

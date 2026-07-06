@@ -8,9 +8,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import time
 from urllib.parse import quote
@@ -18,6 +20,10 @@ from typing import Optional
 
 from .store import CleanDoc, Store
 from . import health
+
+# Windows 上 opencli 是 .CMD 脚本无 .exe，subprocess 裸名 CreateProcess 找不到（不套 PATHEXT）。
+# 用 shutil.which 解析全路径；mac/Linux 返回普通路径，同样正确。
+_OPENCLI = shutil.which("opencli") or "opencli"
 
 # 平台名 → opencli site。黑猫(heimao)无 opencli 后端，走 browser 通用桥（见 _fetch_heimao）。
 OPENCLI_SITE = {"weibo": "weibo", "zhihu": "zhihu", "douyin": "douyin",
@@ -48,6 +54,18 @@ def _to_int(v) -> int:
         return 0
 
 
+def _derive_id(item: dict) -> str:
+    """取平台原生 id；没有显式 id 字段时（如知乎）从 url 末段/哈希派生稳定 id。"""
+    nid = _pick(item, "id", "note_id", "mid", "aweme_id", "rid", default="")
+    if nid:
+        return str(nid)
+    u = _pick(item, "url", "link", "note_url", default="")
+    if u:
+        seg = u.split("?")[0].rstrip("/").split("/")[-1]
+        return seg or hashlib.md5(u.encode("utf-8")).hexdigest()[:12]
+    return ""
+
+
 def normalize(platform: str, entity_id: str, item: dict, backend: str, fetched_at: str) -> CleanDoc:
     text = _pick(item, "text", "content", "desc", "title", default="")
     user = item.get("user") or item.get("author") or {}
@@ -56,11 +74,11 @@ def normalize(platform: str, entity_id: str, item: dict, backend: str, fetched_a
     is_complaint = platform == "heimao" or any(t in text for t in _COMPLAINT_TRIGGERS)
     return CleanDoc.build(
         platform=platform, entity_id=entity_id,
-        native_id=_pick(item, "id", "note_id", "mid", "aweme_id", "rid", default=""),
+        native_id=_derive_id(item),
         text=text,
         author=_pick(user, "nickname", "nick_name", "name", default=""),
         author_followers=_to_int(_pick(user, "followers", "fans", "fans_count", default=0)),
-        likes=_to_int(_pick(item, "like_count", "liked_count", "digg_count", "likes", default=0)),
+        likes=_to_int(_pick(item, "like_count", "liked_count", "digg_count", "votes", "likes", default=0)),
         comments=_to_int(_pick(item, "comment_count", "comments", "comment", default=0)),
         reposts=_to_int(_pick(item, "repost_count", "share_count", "forward_count", default=0)),
         publish_ts=str(_pick(item, "created_at", "time", "publish_time", "date", default="")),
@@ -70,25 +88,41 @@ def normalize(platform: str, entity_id: str, item: dict, backend: str, fetched_a
     )
 
 
+def _parse_opencli_json(stdout: str, returncode: int, site: str, limit: int) -> list[dict]:
+    """解析 opencli JSON 输出，区分'成功空结果'与'真失败'。
+
+    opencli 对'没搜到'会返回 {ok:false, error:{code:NOT_FOUND}} 且 exitCode=1——
+    这是空结果不是故障，必须当 []（否则误判健康三态为 fail=数据不全）。
+    真正的登录态/风控失败(NOT_LOGGED_IN 等)才 raise，交给上层记 error。
+    """
+    data = json.loads(stdout or "[]")
+    if isinstance(data, dict) and data.get("ok") is False:
+        code = (data.get("error") or {}).get("code", "")
+        if code in ("NOT_FOUND", "EMPTY", "NO_RESULTS"):
+            return []                                    # 成功的空结果
+        msg = (data.get("error") or {}).get("message", "") or code
+        raise RuntimeError(f"opencli {site} 失败({code}): {msg[:160]}")
+    if returncode != 0 and not isinstance(data, (list, dict)):
+        raise RuntimeError(f"opencli {site} 退出码 {returncode}")
+    items = data if isinstance(data, list) else data.get("items") or data.get("data") or []
+    return items[:limit]
+
+
 def _fetch_opencli(platform: str, keyword: str, limit: int) -> list[dict]:
     site = OPENCLI_SITE.get(platform)
     if not site:
         raise ValueError(f"平台 {platform} 无 opencli 后端，请走 Web/Jina 或提供 fixture")
     out = subprocess.run(
-        ["opencli", site, "search", keyword, "-f", "json"],
+        [_OPENCLI, site, "search", keyword, "--limit", str(min(limit, 50)), "-f", "json"],
         capture_output=True, encoding="utf-8", errors="replace", timeout=120,
     )
-    if out.returncode != 0:
-        raise RuntimeError(f"opencli {site} 失败: {out.stderr[:200]}")
-    data = json.loads(out.stdout or "[]")
-    items = data if isinstance(data, list) else data.get("items") or data.get("data") or []
-    return items[:limit]
+    return _parse_opencli_json(out.stdout, out.returncode, site, limit)
 
 
 def _fetch_opencli_userposts(site: str, user: str, limit: int) -> list[dict]:
     """跟踪指定 KOL/官号主页（user-posts 入口）。"""
     out = subprocess.run(
-        ["opencli", site, "user-posts", user, "-f", "json"],
+        [_OPENCLI, site, "user-posts", user, "-f", "json"],
         capture_output=True, encoding="utf-8", errors="replace", timeout=120)
     if out.returncode != 0:
         raise RuntimeError(f"opencli {site} user-posts 失败: {out.stderr[:200]}")
@@ -121,7 +155,7 @@ def parse_heimao_markdown(md: str) -> list[dict]:
 
 def _opencli_browser(session: str, *args: str, timeout: int = 60) -> str:
     out = subprocess.run(
-        ["opencli", "browser", session, *args],
+        [_OPENCLI, "browser", session, *args],
         capture_output=True, encoding="utf-8", errors="replace", timeout=timeout)
     if out.returncode != 0:
         raise RuntimeError(f"opencli browser {' '.join(args)[:40]} 失败: {(out.stderr or '')[:200]}")
@@ -141,7 +175,11 @@ def _fetch_heimao(keyword: str, limit: int, *, pages: int = 1) -> list[dict]:
     items: list[dict] = []
     seen: set[str] = set()
     for page in range(1, pages + 1):
-        url = (f"https://tousu.sina.com.cn/index/search/?keywords={quote(keyword)}&page={page}")
+        # 注意：URL 里的 & 在 Windows 上会被 opencli.CMD 的 cmd.exe 当命令分隔符（'page' not found）。
+        # 第 1 页不带 &page（tousu 默认第一页）；翻页(page>1)属 Phase 1+，届时需处理 & 转义。
+        url = f"https://tousu.sina.com.cn/index/search/?keywords={quote(keyword)}"
+        if page > 1:
+            url += f"&page={page}"
         _opencli_browser(session, "open", url)
         md = ""
         for _ in range(3):                       # 列表可能异步渲染，重试几次再放弃
@@ -182,10 +220,12 @@ def collect_platform(store: Store, *, run_id: str, entity_id: str, platform: str
     watermark = store.get_watermark(entity_id, platform, entry)
     max_ts = watermark or ""
     inserted = 0
+    n_valid = 0                                  # 含有效 native_id、可解析的条数
     for it in items:
         doc = normalize(platform, entity_id, it, backend, now)
         if not doc.native_id:
             continue
+        n_valid += 1
         ts = doc.publish_ts if _ISO_TS.match(doc.publish_ts) else ""
         if watermark and ts and ts < watermark:
             continue                             # 严格早于水位，跳过
@@ -199,6 +239,10 @@ def collect_platform(store: Store, *, run_id: str, entity_id: str, platform: str
 
     state = health.assess(store, platform=platform, entity_id=entity_id,
                           n_fetched=len(items), status=status)
+    # 抓到了但一条都解析不出 → 多半平台字段格式变了，绝不能顶着 ok 静默丢数据
+    if status == "ok" and len(items) > 0 and n_valid == 0:
+        state = "suspect"
+        note = note or f"字段映射失败：抓到 {len(items)} 条但 0 条含有效ID（平台格式可能变了）"
     store.log_run(run_id, platform, entity_id, len(items), status, state, note, now)
     store.commit()
     return inserted, state
@@ -249,4 +293,28 @@ if __name__ == "__main__":
     hm = normalize("heimao", "myproduct", parsed[1], backend="opencli-browser",
                    fetched_at="2026-07-06T10:00:00+08:00")
     assert hm.is_complaint and hm.native_id == "17359988888"   # 黑猫恒为投诉
-    print("OK collect: doc_id=", d.doc_id, "| 黑猫解析", len(parsed), "条, 恒投诉=", hm.is_complaint)
+
+    # opencli 空结果(NOT_FOUND) 当 []，真失败才 raise
+    assert _parse_opencli_json('{"ok":false,"error":{"code":"NOT_FOUND"}}', 1, "weibo", 50) == []
+    try:
+        _parse_opencli_json('{"ok":false,"error":{"code":"NOT_LOGGED_IN","message":"登录"}}', 1, "weibo", 50)
+        raise AssertionError("登录失败应 raise")
+    except RuntimeError:
+        pass
+    assert len(_parse_opencli_json('[{"id":"1"},{"id":"2"}]', 0, "weibo", 1)) == 1   # limit 截断
+
+    # 知乎无 id 字段：从 url 末段派生 native_id；votes 计为互动
+    zh = normalize("zhihu", "e", {"rank": 1, "title": "评测", "author": "作者", "votes": 6,
+                                  "url": "https://zhuanlan.zhihu.com/p/2055758079493510613"},
+                   backend="opencli", fetched_at="2026-07-06T10:00:00+08:00")
+    assert zh.native_id == "2055758079493510613" and zh.likes == 6, (zh.native_id, zh.likes)
+
+    # 字段映射失败保护：抓到但全部无 id → 健康判 suspect（不静默顶 ok）
+    from .store import Store as _S
+    st = _S(":memory:")
+    _n, _state = collect_platform(st, run_id="r", entity_id="e", platform="weibo", keyword="k",
+                                  now="2026-07-06T10:00:00+08:00",
+                                  fixture=[{"rank": 1, "title": "无id无url的脏数据"}])
+    assert _state == "suspect", f"映射失败应判 suspect，实际 {_state}"
+    print("OK collect: doc_id=", d.doc_id, "| 黑猫解析", len(parsed),
+          "条 | 空/失败区分✓ | url派生id✓ | 映射失败保护✓")
