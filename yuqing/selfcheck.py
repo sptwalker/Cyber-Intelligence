@@ -268,6 +268,13 @@ def demo() -> None:
     store.record_heartbeat("2026-07-06T10:00:00+08:00", "ok")
     assert store.get_heartbeat()["last_success"] == "2026-07-06T10:00:00+08:00"
 
+    # v1-D) 影响力降级标注：h1(黑猫,零互动) 负面 → signals 标 influence_degraded，报告出"⚠降级"+可信度note
+    import json as _json
+    h1id = doc_id_for("heimao", "h1")
+    sig = _json.loads(store.conn.execute("SELECT signals FROM features WHERE doc_id=?", (h1id,)).fetchone()[0])
+    assert sig.get("influence_degraded"), "零互动负面应标记影响力降级"
+    assert "⚠降级" in md and "可信度标注" in md, "报告应显式标注降级数据"
+
     print("OK selfcheck —— 整条链跑通：")
     print(f"  去重 clean={n_clean}｜features 全带 evidence 子串｜Top负面={top['native_id']}(risk={top['risk']})")
     print(f"  报告数字与聚合一致、引用校验通过、伪造引用被抓")
@@ -279,6 +286,7 @@ def demo() -> None:
     print(f"  v1-A：串味过滤(否定词/别名)✓ 原始层审计留全量✓")
     print(f"  v1-B：复核队列(低置信/高风险入队)✓ 标注出队✓ 质检KPI✓")
     print(f"  v1-C：心跳前移(失败不算存活)✓ [deadman/登录态告警见 scheduler selftest]")
+    print(f"  v1-D：影响力降级标注(⚠降级)✓ 报告可信度note✓ SQLite WAL✓")
     print("\n--- 生成的周报（happy path，节选）---\n")
     print(md[:900])
 

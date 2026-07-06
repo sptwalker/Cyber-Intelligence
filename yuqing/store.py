@@ -115,6 +115,9 @@ class Store:
     def __init__(self, path: str | Path = "yuqing.db"):
         self.conn = sqlite3.connect(str(path))
         self.conn.row_factory = sqlite3.Row
+        # WAL：允许"看板/CLI 读"与"跑批写"并发（单写者仍是多用户上限，Phase2 迁 Postgres）
+        if str(path) != ":memory:":
+            self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.executescript(_SCHEMA)
 
     # --- raw / clean ---

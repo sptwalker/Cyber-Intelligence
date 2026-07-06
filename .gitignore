@@ -10,3 +10,5 @@ _seed_demo.py
 _seed.py
 _demo.py
 probe_live.py
+*.db-wal
+*.db-shm

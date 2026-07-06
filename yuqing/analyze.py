@@ -14,7 +14,7 @@ import os
 import datetime as _dt
 from typing import Optional
 
-from .score import Weights, risk_score
+from .score import Weights, risk_score, influence_degraded
 
 # --- 词典（冷启动种子，后续从误报回灌迭代）---
 CRISIS_WORDS = ["维权", "退款", "翻车", "避雷", "塌房", "召回", "爆炸", "起火", "曝光", "315", "诉讼", "欺诈"]
@@ -202,6 +202,8 @@ def analyze_pending(store, weights: Optional[Weights] = None, *, use_claude: Opt
         merged.update(polarity=feat["polarity"], intensity=feat.get("intensity", 0.0),
                       signals=sig, is_complaint=bool(r["is_complaint"]))
         feat["risk"] = risk_score(merged, weights)
+        if feat["risk"] > 0 and influence_degraded(merged):
+            sig["influence_degraded"] = True     # 风险分缺互动数据(如微博搜索)，报告须标注降级
         store.add_feature(r["doc_id"], feat)
     store.commit()
     return len(rows)

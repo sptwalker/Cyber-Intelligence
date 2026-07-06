@@ -48,6 +48,15 @@ def risk_score(row: dict, w: Weights) -> float:
     return round(base * neg * infl, 3)
 
 
+def influence_degraded(row: dict) -> bool:
+    """无任何互动/粉丝数据 → 影响力项塌缩为存在下限，风险分是"降级"的（如微博搜索无点赞/转发）。
+
+    这类分数只反映"命中危机词/投诉"，不含真实传播影响力，报告须显式标注、不可当全量真值。
+    """
+    return not any((row.get("likes") or 0, row.get("comments") or 0,
+                    row.get("reposts") or 0, row.get("author_followers") or 0))
+
+
 if __name__ == "__main__":
     w = Weights()
     big = {"polarity": "neg", "intensity": 0.9, "platform": "weibo", "is_complaint": True,
@@ -61,4 +70,8 @@ if __name__ == "__main__":
     assert rb > rs > 0, (rb, rs)          # 大V危机负面 > 素人负面
     assert rp == 0.0                       # 正面不计风险，哪怕互动爆表
     assert risk_score({**big, "author_followers": 10**9}, w) < rb * 3  # 封顶生效
+    # 影响力降级检测：无任何互动/粉丝 → True（微博搜索场景）
+    assert influence_degraded({"platform": "weibo", "likes": 0, "comments": 0, "reposts": 0,
+                               "author_followers": 0})
+    assert not influence_degraded(big)
     print(f"OK score: 大V={rb} 素人={rs} 正面={rp}")

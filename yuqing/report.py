@@ -132,11 +132,22 @@ def build_report(store, watch: dict, *, run_id: str, now: str,
             f"| {p} | {v['total']} | {v['neg']} |\n" for p, v in m["by_platform"].items()))
 
         if m["top_neg"]:
+            rows_md = ""
+            for i, r in enumerate(m["top_neg"], 1):
+                deg = "⚠降级" if json.loads(r.get("signals") or "{}").get("influence_degraded") else ""
+                rows_md += (f"| {i} | {r['platform']} | {r['risk']}{deg} | {(r['summary'] or '')[:30]} | "
+                            f"[原帖]({r['url'] or '#'}) {_cite(r['doc_id'])} |\n")
             parts.append("## 负面 Top 清单（按风险分）\n| # | 平台 | 风险 | 摘要 | 溯源 |\n|---|---|---|---|---|\n"
-                         + "".join(
-                f"| {i} | {r['platform']} | {r['risk']} | {(r['summary'] or '')[:30]} | "
-                f"[原帖]({r['url'] or '#'}) {_cite(r['doc_id'])} |\n"
-                for i, r in enumerate(m["top_neg"], 1)))
+                         + rows_md)
+
+        degraded = store.conn.execute(
+            "SELECT COUNT(*) FROM clean c JOIN features f USING(doc_id) "
+            "WHERE c.entity_id=? AND f.polarity='neg' AND f.signals LIKE '%influence_degraded%'",
+            (ent["id"],)).fetchone()[0]
+        if degraded:
+            parts.append(f"\n> 📉 可信度标注：本产品 {degraded} 条负面风险分为**影响力降级**（⚠降级）"
+                         "——平台无点赞/转发数据（如微博搜索），权重仅按'存在'计，不含真实传播影响力，"
+                         "**勿据此跨平台比较声量**，需第三方数据补齐。\n")
 
         anom = analytics.negative_anomaly(store, ent["id"])
         if anom["anomaly"]:
