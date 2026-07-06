@@ -4,6 +4,8 @@
 
 基于 [Agent-Reach](https://github.com/Panniantong/Agent-Reach) 的"能力层"理念构建——**复用已登录的浏览器会话采集，零 API 费**；不自己造爬虫。面向出海硬件品牌（Youdoo Box）自有口碑 + 竞品（KINHANK）监控。
 
+**已接入 7 平台**（真实数据验证）：微博 · 知乎 · 小红书 · 抖音 · B站 · 贴吧（免登录）· 黑猫投诉。快手 opencli 无适配器，暂不支持。
+
 ## 现状
 
 - **技术底座已建成并用真实数据跑通**（Phase 0–3）：微博/知乎真实采集（115 条/期），出带 SOV/ABSA/负面Top/诉求 backlog 的可溯源周报。
