@@ -28,7 +28,8 @@ _OPENCLI = shutil.which("opencli") or "opencli"
 
 # 平台名 → opencli site。黑猫(heimao)无 opencli 后端，走 browser 通用桥（见 _fetch_heimao）。
 OPENCLI_SITE = {"weibo": "weibo", "zhihu": "zhihu", "douyin": "douyin",
-                "xiaohongshu": "xiaohongshu", "bilibili": "bilibili", "tieba": "tieba"}
+                "xiaohongshu": "xiaohongshu", "bilibili": "bilibili", "tieba": "tieba",
+                "weixin": "weixin"}   # weixin=公众号(搜狗微信搜索,免登录)；视频号只能发布不能读,不接
 
 _COMPLAINT_TRIGGERS = ["投诉", "维权", "退款", "退货", "赔偿", "曝光", "避雷", "翻车", "召回", "欺诈"]
 _ISO_TS = re.compile(r"^\d{4}-\d{2}-\d{2}")   # 仅 ISO 日期串可参与水位比较
@@ -55,20 +56,29 @@ def _to_int(v) -> int:
         return 0
 
 
+# url 末段是这些泛化词时，说明它不是文章 id（如公众号搜狗跳转链 /link）——改用 标题+时间 哈希。
+_GENERIC_SEG = {"", "link", "index", "s", "detail", "view", "article", "search"}
+
+
 def _derive_id(item: dict) -> str:
-    """取平台原生 id；没有显式 id 字段时（如知乎）从 url 末段/哈希派生稳定 id。"""
+    """取平台原生 id；无显式 id 时从 url 末段派生；末段泛化(如搜狗 /link)时用 标题+时间 稳定哈希。"""
     nid = _pick(item, "id", "note_id", "mid", "aweme_id", "rid", default="")
     if nid:
         return str(nid)
     u = _pick(item, "url", "link", "note_url", default="")
-    if u:
-        seg = u.split("?")[0].rstrip("/").split("/")[-1]
-        return seg or hashlib.md5(u.encode("utf-8")).hexdigest()[:12]
-    return ""
+    seg = u.split("?")[0].rstrip("/").split("/")[-1] if u else ""
+    if seg and seg.lower() not in _GENERIC_SEG:
+        return seg                                       # url 末段就是稳定 id（微博/知乎/B站/抖音…）
+    # 无稳定 url 段：用 标题+发布时间 做稳定去重键（公众号 sogou 跳转链无固定 id）
+    basis = _pick(item, "title", "desc", "text", default="") + "|" + \
+        _pick(item, "publish_time", "time", "date", "published_at", default="")
+    if basis.strip("|"):
+        return hashlib.md5(basis.encode("utf-8")).hexdigest()[:12]
+    return hashlib.md5(u.encode("utf-8")).hexdigest()[:12] if u else ""
 
 
 def normalize(platform: str, entity_id: str, item: dict, backend: str, fetched_at: str) -> CleanDoc:
-    text = _pick(item, "text", "content", "desc", "snippet", "title", default="")  # 贴吧 snippet 是全文
+    text = _pick(item, "text", "content", "desc", "snippet", "summary", "title", default="")  # 贴吧snippet/公众号summary=全文
     user = item.get("user") or item.get("author") or {}
     if isinstance(user, str):
         user = {"nickname": user}
@@ -359,12 +369,12 @@ if __name__ == "__main__":
                    backend="opencli", fetched_at="2026-07-06T10:00:00+08:00")
     assert zh.native_id == "2055758079493510613" and zh.likes == 6, (zh.native_id, zh.likes)
 
-    # 字段映射失败保护：抓到但全部无 id → 健康判 suspect（不静默顶 ok）
+    # 字段映射失败保护：抓到但全部无可用字段(无id/url/标题/正文) → 健康判 suspect（不静默顶 ok）
     from .store import Store as _S
     st = _S(":memory:")
     _n, _state = collect_platform(st, run_id="r", entity_id="e", platform="weibo", keyword="k",
                                   now="2026-07-06T10:00:00+08:00",
-                                  fixture=[{"rank": 1, "title": "无id无url的脏数据"}])
+                                  fixture=[{"rank": 1, "unknownfield": "格式全变了"}])
     assert _state == "suspect", f"映射失败应判 suspect，实际 {_state}"
 
     # 黑猫登录墙检测(靠"退出"链接) + 空结果健康：未登录→wall；已登录无投诉→非wall(正常空→ok)
