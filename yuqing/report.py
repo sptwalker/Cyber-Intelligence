@@ -9,7 +9,6 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 import urllib.request
 from typing import Optional
@@ -95,7 +94,9 @@ def _prose_claude(entity_name: str, m: dict, model: str = "claude-sonnet-5") -> 
     system = ("你给产品运营写舆情周报的三段散文：执行摘要、话题点评、行动建议。"
               "严禁输出下方 facts 里没有的任何数字；每个结论后标注 [来源:doc_id]，"
               "doc_id 只能取自 evidence；无充分证据写'证据不足'，不要编造。")
-    msg = anthropic.Anthropic().messages.create(
+    from . import config
+    client = anthropic.Anthropic(api_key=config.resolve("ANTHROPIC_API_KEY") or None)
+    msg = client.messages.create(
         model=model, max_tokens=1500, system=system,
         messages=[{"role": "user", "content": json.dumps(facts, ensure_ascii=False)}],
     )
@@ -106,7 +107,8 @@ def build_report(store, watch: dict, *, run_id: str, now: str,
                  health_by_platform: dict[str, str], use_claude: Optional[bool] = None) -> str:
     """生成周报 Markdown。数字全部来自 aggregate，散文来自 stub/Claude。"""
     if use_claude is None:
-        use_claude = bool(os.getenv("ANTHROPIC_API_KEY"))
+        from . import config
+        use_claude = bool(config.resolve("ANTHROPIC_API_KEY"))
 
     parts: list[str] = []
     band = health.banner(health_by_platform)
@@ -203,7 +205,8 @@ def validate_citations(markdown: str, store) -> list[str]:
 
 def push_feishu(markdown: str, webhook: Optional[str] = None, *, title: str = "舆情周报") -> bool:
     """推送到飞书机器人。无 webhook 则跳过（返回 False）。"""
-    webhook = webhook or os.getenv("FEISHU_WEBHOOK")
+    from . import config
+    webhook = webhook or config.resolve("FEISHU_WEBHOOK")
     if not webhook:
         return False
     body = json.dumps({"msg_type": "text",

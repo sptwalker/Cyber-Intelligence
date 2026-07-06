@@ -275,6 +275,30 @@ def demo() -> None:
     assert sig.get("influence_degraded"), "零互动负面应标记影响力降级"
     assert "⚠降级" in md and "可信度标注" in md, "报告应显式标注降级数据"
 
+    # 配置页：设置页含所有字段、密钥脱敏、绝不回显全量、表单保存生效
+    import os as _os, tempfile as _tf
+    from . import config as _cfg
+    _os.environ["YUQING_CONFIG"] = _tf.mktemp(suffix=".json")
+    _cfg.save({"FEISHU_WEBHOOK": "https://open.feishu.cn/hook/topsecret999",
+               "DEEPSEEK_API_KEY": "sk-live-4321"})
+    page = dashboard.render_config()
+    assert "系统配置" in page and "DeepSeek API Key" in page and "飞书机器人 Webhook" in page
+    assert "topsecret999" not in page and "sk-live-4321" not in page, "设置页绝不回显全量密钥"
+    assert "••••t999" in page or "••••4321" in page, "密钥应脱敏尾4位"
+    assert _cfg.resolve("DEEPSEEK_API_KEY") == "sk-live-4321"        # 保存生效
+    _os.remove(_os.environ.pop("YUQING_CONFIG"))
+
+    # 配置写接口防护：本机 same-origin 放行；跨站(Sec-Fetch-Site)/异域 Origin/远端 Host 拒绝(防CSRF窃密钥)
+    class _H:
+        def __init__(self, d): self._d = d
+        def get(self, k, default=None): return self._d.get(k, default)
+    def _mk(**kw): return type("R", (), {"headers": _H(kw)})()
+    assert dashboard._write_allowed(_mk(Host="127.0.0.1:8000"))                       # 本机放行
+    assert dashboard._write_allowed(_mk(Host="localhost:8000", **{"Sec-Fetch-Site": "same-origin"}))
+    assert not dashboard._write_allowed(_mk(Host="127.0.0.1:8000", **{"Sec-Fetch-Site": "cross-site"}))
+    assert not dashboard._write_allowed(_mk(Host="evil.com"))                         # DNS rebinding
+    assert not dashboard._write_allowed(_mk(Host="127.0.0.1:8000", Origin="http://evil.com"))
+
     print("OK selfcheck —— 整条链跑通：")
     print(f"  去重 clean={n_clean}｜features 全带 evidence 子串｜Top负面={top['native_id']}(risk={top['risk']})")
     print(f"  报告数字与聚合一致、引用校验通过、伪造引用被抓")
@@ -287,6 +311,7 @@ def demo() -> None:
     print(f"  v1-B：复核队列(低置信/高风险入队)✓ 标注出队✓ 质检KPI✓")
     print(f"  v1-C：心跳前移(失败不算存活)✓ [deadman/登录态告警见 scheduler selftest]")
     print(f"  v1-D：影响力降级标注(⚠降级)✓ 报告可信度note✓ SQLite WAL✓")
+    print(f"  配置页：飞书/AI模型表单✓ 密钥脱敏不回显✓ 保存生效✓")
     print("\n--- 生成的周报（happy path，节选）---\n")
     print(md[:900])
 

@@ -1,10 +1,9 @@
 # -*- coding: utf-8 -*-
-"""最小只读看板：报告历史 + 采集健康三态 + 负面 Top。
+"""最小看板：报告历史 + 采集健康三态 + 负面 Top + 系统配置页。
 
-ponytail: 只读、无交互 → 用 stdlib http.server 直读 SQLite，零新依赖
-（不上 Streamlit/FastAPI）。渲染是纯函数 render_index/render_report，可离线自检。
+ponytail: 数据视图只读 → stdlib http.server 直读 SQLite，零新依赖。/config 是唯一写入口
+（表单存 yuqing_config.json），仅限本机（127.0.0.1 绑定 + Host 头校验）。
     python -m yuqing.dashboard yuqing.db      # 起服务，浏览器开 http://127.0.0.1:8000
-只读：仅 GET，绝不改库。
 """
 
 from __future__ import annotations
@@ -90,7 +89,8 @@ def render_index(store: Store) -> str:
     ) or "<tr><td colspan=5 class=muted>暂无负面</td></tr>"
 
     body = (
-        "<h1>舆情监控看板 <span class=muted>（只读）</span></h1>" + banner + review_line +
+        "<h1>舆情监控看板 <span class=muted>（数据只读）</span> "
+        "<a href='/config' style='font-size:14px'>⚙️ 系统配置</a></h1>" + banner + review_line +
         "<h2>采集健康（各平台最近一次）</h2>"
         "<table><tr><th>平台</th><th>状态</th><th>条数</th><th>时间</th><th>备注</th></tr>"
         + health_rows + "</table>"
@@ -112,31 +112,116 @@ def render_report(store: Store, run_id: str) -> str:
     return _page(run_id, f"<p><a href='/'>← 返回</a></p><pre>{html.escape(row['markdown'])}</pre>")
 
 
+def render_config(*, saved: bool = False, test_msg: str = "") -> str:
+    from . import config
+    rows = ""
+    for k, label, secret, display, is_set in config.masked():
+        if secret:
+            ph = f"已设置 {html.escape(display)}，留空则不改" if is_set else "未设置"
+            field = f"<input type=password name={k} placeholder='{ph}' autocomplete=off>"
+        else:
+            field = f"<input type=text name={k} value='{html.escape(display)}'>"
+        rows += (f"<tr><td>{html.escape(label)}</td><td>{field}</td>"
+                 f"<td class=muted>{'✓已配置' if is_set else '—'}</td></tr>")
+    notice = "<p style='color:#1a7f37'>✓ 已保存</p>" if saved else ""
+    if test_msg:
+        notice += f"<p class=muted>{html.escape(test_msg)}</p>"
+    tests = (" ｜ 测试连通："
+             "<a href='/config/test?p=deepseek'>DeepSeek</a> "
+             "<a href='/config/test?p=minimax'>MiniMax</a> "
+             "<a href='/config/test?p=feishu'>飞书</a>")
+    body = (
+        "<h1>系统配置 <span class=muted>（本机写入，密钥仅存本地 yuqing_config.json）</span></h1>"
+        f"<p><a href='/'>← 返回看板</a>{tests}</p>" + notice +
+        "<form method=post action='/config'>"
+        "<table><tr><th>配置项</th><th>值</th><th>状态</th></tr>" + rows + "</table>"
+        "<p><button type=submit>保存</button> "
+        "<span class=muted>密钥留空=保持原值；明文项留空=清除回退默认</span></p></form>"
+        "<p class=muted>⚠️ 保存后需重跑批 <code>python -m yuqing.run</code> 生效。"
+        "密钥以明文存本地文件（同 env 风险），已 gitignore 不进仓库。</p>")
+    return _page("系统配置", body)
+
+
+def _write_allowed(handler) -> bool:
+    """写接口防护：仅本机 + 拒绝跨站（防 CSRF 篡改 base_url/webhook 窃取密钥）。
+
+    - Host 须 localhost（挡 DNS rebinding）；
+    - Sec-Fetch-Site 若存在须 same-origin/none（现代浏览器强制发送、JS 不可伪造）；
+    - Origin 若存在须指向本机（老浏览器兜底）。
+    """
+    h = handler.headers
+    host = (h.get("Host") or "").split(":")[0]
+    if host not in ("127.0.0.1", "localhost"):
+        return False
+    sfs = h.get("Sec-Fetch-Site")
+    if sfs and sfs not in ("same-origin", "none"):
+        return False                              # 跨站请求，拒绝
+    origin = h.get("Origin")
+    if origin:
+        oh = urlparse(origin).hostname
+        if oh not in ("127.0.0.1", "localhost"):
+            return False
+    return True
+
+
 def make_handler(db: str):
     class Handler(BaseHTTPRequestHandler):
-        def do_GET(self):
-            u = urlparse(self.path)
-            store = Store(db)
-            try:
-                if u.path == "/":
-                    body = render_index(store)
-                elif u.path == "/report":
-                    rid = parse_qs(u.query).get("run_id", [""])[0]
-                    body = render_report(store, rid)
-                else:
-                    self.send_error(404); return
-            finally:
-                store.close()
+        def _send(self, body: str, code: int = 200):
             data = body.encode("utf-8")
-            self.send_response(200)
+            self.send_response(code)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
             self.wfile.write(data)
 
+        def do_GET(self):
+            u = urlparse(self.path)
+            if u.path == "/config":
+                self._send(render_config()); return
+            if u.path == "/config/test":
+                self._send(render_config(test_msg=_run_test(parse_qs(u.query).get("p", [""])[0]))); return
+            store = Store(db)
+            try:
+                if u.path == "/":
+                    body = render_index(store)
+                elif u.path == "/report":
+                    body = render_report(store, parse_qs(u.query).get("run_id", [""])[0])
+                else:
+                    self.send_error(404); return
+            finally:
+                store.close()
+            self._send(body)
+
+        def do_POST(self):
+            if urlparse(self.path).path != "/config":
+                self.send_error(404); return
+            if not _write_allowed(self):                  # 写接口：仅本机 + 拒绝跨站(防CSRF)
+                self.send_error(403); return
+            from . import config
+            n = int(self.headers.get("Content-Length") or 0)
+            form = {k: v[0] for k, v in parse_qs(self.rfile.read(n).decode("utf-8")).items()}
+            config.save(form)
+            self._send(render_config(saved=True))
+
         def log_message(self, *a):  # 静音默认日志
             pass
     return Handler
+
+
+def _run_test(provider: str) -> str:
+    """连通测试（供 /config/test）。"""
+    if provider in ("deepseek", "minimax"):
+        from . import llm
+        ok, msg = llm.probe(provider)
+        return f"{provider}：{msg}"
+    if provider == "feishu":
+        from .report import push_feishu
+        try:
+            ok = push_feishu("【测试】yuqing 系统配置连通测试", title="配置测试")
+            return "飞书：已发送测试消息（去群里确认）" if ok else "飞书：未配置 Webhook"
+        except Exception as e:
+            return f"飞书：发送失败 {str(e)[:150]}"
+    return "未知测试项"
 
 
 def serve(db: str = "yuqing.db", host: str = "127.0.0.1", port: int = 8000) -> None:

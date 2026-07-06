@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 
 from .store import Store
+from . import config
 
 
 class BudgetExceeded(Exception):
@@ -17,8 +18,8 @@ class BudgetExceeded(Exception):
 
 
 def _limits() -> tuple[int, int]:
-    return (int(os.getenv("YUQING_MAX_CALLS", "5000")),
-            int(os.getenv("YUQING_MAX_TOKENS", "20000000")))
+    return (int(config.resolve("YUQING_MAX_CALLS") or "5000"),
+            int(config.resolve("YUQING_MAX_TOKENS") or "20000000"))
 
 
 def guard(store: Store, day: str, *, add_calls: int = 1, add_tokens: int = 0) -> None:

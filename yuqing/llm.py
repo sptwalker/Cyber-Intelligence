@@ -8,8 +8,9 @@ stdlib urllib，不加依赖。base_url/model 走 env 可覆盖（MiniMax 端点
 from __future__ import annotations
 
 import json
-import os
 import urllib.request
+
+from . import config
 
 # 每个 provider 的 env 键与默认值（OpenAI 兼容 /chat/completions）
 _PROVIDERS = {
@@ -24,7 +25,7 @@ _PROVIDERS = {
 
 def available(provider: str) -> bool:
     p = _PROVIDERS.get(provider)
-    return bool(p and os.getenv(p["key"]))
+    return bool(p and config.resolve(p["key"]))
 
 
 def _build_payload(model: str, system: str, user: str) -> dict:
@@ -44,16 +45,28 @@ def _parse_content(resp: dict) -> dict:
 def chat_json(provider: str, system: str, user: str, *, timeout: int = 90) -> dict:
     """调 provider 返回解析后的 JSON dict。需对应 API key。"""
     cfg = _PROVIDERS[provider]
-    key = os.getenv(cfg["key"])
+    key = config.resolve(cfg["key"])
     if not key:
-        raise RuntimeError(f"{cfg['key']} 未设置")
-    url = os.getenv(cfg["base"], cfg["base_def"]).rstrip("/") + "/chat/completions"
-    body = json.dumps(_build_payload(os.getenv(cfg["model"], cfg["model_def"]), system, user)).encode("utf-8")
+        raise RuntimeError(f"{cfg['key']} 未配置")
+    url = (config.resolve(cfg["base"]) or cfg["base_def"]).rstrip("/") + "/chat/completions"
+    model = config.resolve(cfg["model"]) or cfg["model_def"]
+    body = json.dumps(_build_payload(model, system, user)).encode("utf-8")
     req = urllib.request.Request(url, data=body, method="POST",
                                  headers={"Authorization": f"Bearer {key}",
                                           "Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return _parse_content(json.loads(r.read().decode("utf-8")))
+
+
+def probe(provider: str) -> tuple[bool, str]:
+    """连通测试（供设置页"测试"按钮）。返回 (是否通, 说明)。"""
+    if not available(provider):
+        return False, "未配置 API Key"
+    try:
+        r = chat_json(provider, "只返回JSON", '返回 {"ok":true}', timeout=20)
+        return True, f"连通 ✓（返回 {json.dumps(r, ensure_ascii=False)[:80]}）"
+    except Exception as e:
+        return False, f"失败：{str(e)[:200]}"
 
 
 if __name__ == "__main__":

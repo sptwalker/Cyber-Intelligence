@@ -12,3 +12,4 @@ _demo.py
 probe_live.py
 *.db-wal
 *.db-shm
+yuqing_config.json
