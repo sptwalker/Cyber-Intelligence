@@ -5,10 +5,12 @@
     python -m yuqing.cli timeline "星海手机"
     python -m yuqing.cli backlog [out.csv]
     python -m yuqing.cli daily
+    python -m yuqing.cli review [stats | <doc_id> <结论> [备注]]   # 人工复核队列/标注
 """
 
 from __future__ import annotations
 
+import datetime as _dt
 import sys
 
 from . import load_watch
@@ -41,6 +43,31 @@ def main(argv: list[str]) -> int:
                 print(csv)
         elif cmd == "daily":
             print(oneliner(store, load_watch()))
+        elif cmd == "review":
+            if not args:                                   # 列出待复核队列
+                q = store.review_queue()
+                print(f"待复核 {store.pending_review_count()} 条（显示前 {len(q)}，按风险降序）：")
+                for r in q:
+                    flag = "🌀反讽" if r["is_ironic"] else ""
+                    print(f"  {r['doc_id']} [{r['platform']}] {r['polarity']}"
+                          f"(conf{r['confidence']:.2f} risk{r['risk']}){flag} {(r['text'] or '')[:40]}")
+                print("标注: python -m yuqing.cli review <doc_id> <结论> [备注]"
+                      "  结论如 ok/改负/改正/串味/水军/危机确认")
+            elif args[0] == "stats":
+                s = store.review_stats()
+                print((f"已复核 {s['reviewed']} 条，机器判错 {s['machine_wrong']} 条"
+                       f"（复核样本[最难的低置信/高风险]判错率 {s['machine_wrong'] / s['reviewed']:.0%}，"
+                       f"非全量准确率）") if s["reviewed"] else "尚无复核记录")
+            elif len(args) < 2:                            # 只给 doc_id 不给结论 → 拒绝，防误标"ok"
+                print("需要提供结论，例：review <doc_id> 改负 [备注]"
+                      "（结论 ok/改负/改正/串味/水军/危机确认）")
+                return 1
+            else:                                          # 记录复核结论
+                doc_id, verdict = args[0], args[1]
+                note = " ".join(args[2:])
+                store.add_review(doc_id, verdict, note,
+                                 ts=_dt.datetime.now().astimezone().isoformat(timespec="seconds"))
+                print(f"已记录复核：{doc_id} → {verdict}" + (f"（{note}）" if note else ""))
         else:
             print(__doc__)
             return 1

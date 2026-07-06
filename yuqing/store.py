@@ -213,6 +213,38 @@ class Store:
         r = self.conn.execute("SELECT calls,tokens FROM usage WHERE day=?", (day,)).fetchone()
         return (r["calls"], r["tokens"]) if r else (0, 0)
 
+    # --- v1-B: 人工复核队列（数据质量地基）---
+    def review_queue(self, limit: int = 20, conf_lt: float = 0.6, risk_ge: float = 30.0):
+        """待复核队列：机器最没把握的（低置信/反讽/高风险负面）且尚未人工复核过，按风险降序。
+
+        ponytail: MVP 里"复核过一次即永久出队"——即便该帖后续被重新抓取评分翻成高风险
+        也不会重回队列。重评后自动重入队列留待 Phase 2（需比对 review.ts 与 features 更新时点）。
+        """
+        return self.conn.execute(
+            "SELECT c.doc_id,c.platform,c.text,c.url,f.polarity,f.confidence,f.is_ironic,f.risk "
+            "FROM clean c JOIN features f USING(doc_id) "
+            "LEFT JOIN review rv ON rv.doc_id=c.doc_id "
+            "WHERE rv.doc_id IS NULL AND (f.confidence < ? OR f.is_ironic=1 OR f.risk >= ?) "
+            "ORDER BY f.risk DESC, f.confidence ASC LIMIT ?", (conf_lt, risk_ge, limit)).fetchall()
+
+    def pending_review_count(self, conf_lt: float = 0.6, risk_ge: float = 30.0) -> int:
+        return self.conn.execute(
+            "SELECT COUNT(*) FROM clean c JOIN features f USING(doc_id) "
+            "LEFT JOIN review rv ON rv.doc_id=c.doc_id "
+            "WHERE rv.doc_id IS NULL AND (f.confidence < ? OR f.is_ironic=1 OR f.risk >= ?)",
+            (conf_lt, risk_ge)).fetchone()[0]
+
+    def add_review(self, doc_id: str, verdict: str, note: str = "", ts: str = "", kind: str = "qc") -> None:
+        """记录人工复核结论（verdict 如 ok/改负/改正/串味/水军/危机确认）。"""
+        self.conn.execute("INSERT INTO review VALUES(?,?,?,?,?)", (doc_id, kind, verdict, note, ts))
+        self.conn.commit()
+
+    def review_stats(self) -> dict:
+        """质检 KPI：已复核数 + 机器判错数（verdict!=ok）。"""
+        r = self.conn.execute(
+            "SELECT COUNT(*) n, SUM(CASE WHEN verdict<>'ok' THEN 1 ELSE 0 END) wrong FROM review").fetchone()
+        return {"reviewed": r["n"] or 0, "machine_wrong": r["wrong"] or 0}
+
     def commit(self):
         self.conn.commit()
 

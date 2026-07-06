@@ -55,6 +55,9 @@ def render_index(store: Store) -> str:
     any_bad = any(v["health"] != "ok" for v in latest.values())
     banner = ("<p style='color:#cf222e;font-weight:600'>⚠️ 有平台采集异常，下方报告数据可能不全，请人工核查。</p>"
               if any_bad else "")
+    pending = store.pending_review_count()
+    review_line = (f"<p class=muted>📋 待人工复核 <b>{pending}</b> 条"
+                   f"（<code>python -m yuqing.cli review</code>）</p>" if pending else "")
 
     # 2) 负面日趋势（按 fetched_at 天，实时算，text bar）
     trend = conn.execute(
@@ -87,7 +90,7 @@ def render_index(store: Store) -> str:
     ) or "<tr><td colspan=5 class=muted>暂无负面</td></tr>"
 
     body = (
-        "<h1>舆情监控看板 <span class=muted>（只读）</span></h1>" + banner +
+        "<h1>舆情监控看板 <span class=muted>（只读）</span></h1>" + banner + review_line +
         "<h2>采集健康（各平台最近一次）</h2>"
         "<table><tr><th>平台</th><th>状态</th><th>条数</th><th>时间</th><th>备注</th></tr>"
         + health_rows + "</table>"

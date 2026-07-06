@@ -253,6 +253,15 @@ def demo() -> None:
         aliases=["星海手机"], must_not=[])
     assert hs.conn.execute("SELECT COUNT(*) FROM clean").fetchone()[0] == 1, "黑猫投诉标题无品牌名不应被误杀"
 
+    # v1-B) 人工复核队列：低置信/高风险负面进队 → 标注后出队 → 质检KPI统计
+    q = store.review_queue()
+    assert q, "主 store 有低置信/高风险负面，应进复核队列"
+    before = store.pending_review_count()
+    store.add_review(q[0]["doc_id"], "改负", "反讽误判", ts="2026-07-06T10:00:00+08:00")
+    assert store.pending_review_count() == before - 1, "复核后应出队"
+    st = store.review_stats()
+    assert st["reviewed"] == 1 and st["machine_wrong"] == 1, st   # verdict!=ok → 机器判错
+
     print("OK selfcheck —— 整条链跑通：")
     print(f"  去重 clean={n_clean}｜features 全带 evidence 子串｜Top负面={top['native_id']}(risk={top['risk']})")
     print(f"  报告数字与聚合一致、引用校验通过、伪造引用被抓")
@@ -262,6 +271,7 @@ def demo() -> None:
     print(f"  Phase2：ABSA方面级✓ 稳健z-score异常✓ 上升话题✓ 时序看板✓ 分层路由✓")
     print(f"  Phase3：老板日报✓ AI问答(RAG-lite)✓ 诉求→需求闭环✓ 事件时间线✓")
     print(f"  v1-A：串味过滤(否定词/别名)✓ 原始层审计留全量✓")
+    print(f"  v1-B：复核队列(低置信/高风险入队)✓ 标注出队✓ 质检KPI✓")
     print("\n--- 生成的周报（happy path，节选）---\n")
     print(md[:900])
 
