@@ -28,7 +28,7 @@ _OPENCLI = shutil.which("opencli") or "opencli"
 
 # 平台名 → opencli site。黑猫(heimao)无 opencli 后端，走 browser 通用桥（见 _fetch_heimao）。
 OPENCLI_SITE = {"weibo": "weibo", "zhihu": "zhihu", "douyin": "douyin",
-                "xiaohongshu": "xiaohongshu", "bilibili": "bilibili"}
+                "xiaohongshu": "xiaohongshu", "bilibili": "bilibili", "tieba": "tieba"}
 
 _COMPLAINT_TRIGGERS = ["投诉", "维权", "退款", "退货", "赔偿", "曝光", "避雷", "翻车", "召回", "欺诈"]
 _ISO_TS = re.compile(r"^\d{4}-\d{2}-\d{2}")   # 仅 ISO 日期串可参与水位比较
@@ -68,7 +68,7 @@ def _derive_id(item: dict) -> str:
 
 
 def normalize(platform: str, entity_id: str, item: dict, backend: str, fetched_at: str) -> CleanDoc:
-    text = _pick(item, "text", "content", "desc", "title", default="")
+    text = _pick(item, "text", "content", "desc", "snippet", "title", default="")  # 贴吧 snippet 是全文
     user = item.get("user") or item.get("author") or {}
     if isinstance(user, str):
         user = {"nickname": user}
