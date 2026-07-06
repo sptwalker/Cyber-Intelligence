@@ -11,13 +11,13 @@
 from __future__ import annotations
 
 import json
-import os
 import datetime as _dt
 import sys
 from typing import Optional
 
 from .score import Weights, risk_score, influence_degraded
 from . import llm
+from . import config
 
 # --- 词典（冷启动种子，后续从误报回灌迭代）---
 CRISIS_WORDS = ["维权", "退款", "翻车", "避雷", "塌房", "召回", "爆炸", "起火", "曝光", "315", "诉讼", "欺诈"]
@@ -221,6 +221,21 @@ def cross_extract(docs: list[dict]) -> dict[str, dict]:
     return primary
 
 
+def _pick_engine(use_claude: Optional[bool]) -> str:
+    """引擎选择：显式 use_claude=False → 规则(离线/自检)；否则按可用性 llm > claude > 规则。
+
+    绝不用 os.getenv(ANTHROPIC) 把 None 塌成 False——那会让"只有 deepseek/minimax、
+    没 Claude"被误判成规则，整套交叉分析静默失效（曾真实踩坑）。
+    """
+    if use_claude is False:
+        return "rule"
+    if llm.available("deepseek") or llm.available("minimax"):
+        return "llm"
+    if use_claude or config.resolve("ANTHROPIC_API_KEY"):
+        return "claude"
+    return "rule"
+
+
 def analyze_pending(store, weights: Optional[Weights] = None, *, use_claude: Optional[bool] = None,
                     now: Optional[str] = None) -> int:
     """对所有缺 features 的 clean 帖做抽取并落库。返回处理条数。"""
@@ -230,17 +245,7 @@ def analyze_pending(store, weights: Optional[Weights] = None, *, use_claude: Opt
         return 0
     docs = [{"doc_id": r["doc_id"], "text": r["text"]} for r in rows]
 
-    if use_claude is None:
-        use_claude = bool(os.getenv("ANTHROPIC_API_KEY"))
-    # 引擎优先级：deepseek/MiniMax 交叉分析 > Claude > 规则。use_claude 显式覆盖（selfcheck 用）。
-    if use_claude is False:
-        engine = "rule"
-    elif llm.available("deepseek") or llm.available("minimax"):
-        engine = "llm"
-    elif use_claude:
-        engine = "claude"
-    else:
-        engine = "rule"
+    engine = _pick_engine(use_claude)
 
     feats: dict[str, dict] = {}
     if engine != "rule":
@@ -293,6 +298,17 @@ if __name__ == "__main__":
     agree = _cross({"polarity": "neg", "confidence": 0.5}, {"polarity": "neg"})
     assert agree["confidence"] >= 0.8 and "cross_disagree" not in agree.get("signals", {})
     assert _cross({"polarity": "pos", "confidence": 0.9}, None)["confidence"] == 0.9  # 无复核不变
+
+    # 引擎选择回归：有 deepseek/minimax 但无 Claude → 必须 llm（曾误判成 rule 致交叉分析静默失效）
+    _orig = llm.available
+    llm.available = lambda p: p in ("deepseek", "minimax")
+    try:
+        assert _pick_engine(None) == "llm", "有LLM key时默认必须走llm，不能塌成rule"
+        assert _pick_engine(False) == "rule", "显式关闭走规则(离线/自检)"
+        llm.available = lambda p: False
+        assert _pick_engine(None) in ("claude", "rule")             # 无LLM key时看Claude/规则
+    finally:
+        llm.available = _orig
 
     # LLM 返回残缺（缺 polarity/doc_id）被丢弃 → 下游规则兜底（不打崩）
     llm.chat_json = lambda *a, **k: {"items": [
