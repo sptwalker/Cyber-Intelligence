@@ -125,7 +125,9 @@ if __name__ == "__main__":
         assert s.get_heartbeat()["last_success"] == "2026-07-06T10:00:00+08:00"
         # 2) deadman：真调函数（临时库）。30min<阈值→不告警；5h>阈值→告警；naive now 不崩
         tmp = tempfile.mktemp(suffix=".db")
-        Store(tmp).record_heartbeat("2026-07-06T10:00:00+08:00", "ok")
+        _seed = Store(tmp)
+        _seed.record_heartbeat("2026-07-06T10:00:00+08:00", "ok")
+        _seed.close()                             # Windows 下不关连接 os.remove 会被文件锁
         assert deadman(tmp, max_silence_min=180, now="2026-07-06T10:30:00+08:00") is None
         assert deadman(tmp, max_silence_min=180, now="2026-07-06T15:30:00+08:00")   # 告警
         assert deadman(tmp, max_silence_min=180, now="2026-07-06T15:30:00") is not None  # naive 不崩
