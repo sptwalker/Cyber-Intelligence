@@ -82,6 +82,7 @@ def normalize(platform: str, entity_id: str, item: dict, backend: str, fetched_a
         likes=_to_int(_pick(item, "like_count", "liked_count", "digg_count", "votes", "likes", default=0)),
         comments=_to_int(_pick(item, "comment_count", "comments", "comment", default=0)),
         reposts=_to_int(_pick(item, "repost_count", "share_count", "forward_count", "shares", default=0)),
+        plays=_to_int(_pick(item, "plays", "score", "play_count", "views", default=0)),   # B站score=播放量
         publish_ts=str(_pick(item, "created_at", "time", "publish_time", "date", "published_at", default="")),
         url=_pick(item, "url", "link", "note_url", default=""),
         tags=item.get("tags") or item.get("tag_list") or [],

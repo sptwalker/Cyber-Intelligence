@@ -50,6 +50,7 @@ class CleanDoc:
     likes: int = 0
     comments: int = 0
     reposts: int = 0
+    plays: int = 0                # 播放量（B站 score / 抖音 plays）——视频平台的核心传播信号
     publish_ts: str = ""          # ISO8601 (UTC+8)
     url: str = ""
     tags: list = field(default_factory=list)
@@ -80,7 +81,7 @@ CREATE TABLE IF NOT EXISTS raw (
 CREATE TABLE IF NOT EXISTS clean (
     doc_id TEXT PRIMARY KEY, platform TEXT, native_id TEXT, entity_id TEXT,
     author TEXT, author_followers INTEGER, text TEXT,
-    likes INTEGER, comments INTEGER, reposts INTEGER,
+    likes INTEGER, comments INTEGER, reposts INTEGER, plays INTEGER,
     publish_ts TEXT, url TEXT, tags TEXT, content_cluster TEXT,
     is_complaint INTEGER, backend TEXT, fetched_at TEXT,
     UNIQUE(platform, native_id) ON CONFLICT IGNORE
@@ -119,6 +120,10 @@ class Store:
         if str(path) != ":memory:":
             self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.executescript(_SCHEMA)
+        try:                          # 轻量迁移：旧库补 plays 列（B站/抖音 播放量）
+            self.conn.execute("ALTER TABLE clean ADD COLUMN plays INTEGER DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass                      # 列已存在
 
     # --- raw / clean ---
     def add_raw(self, doc: "CleanDoc", payload: dict) -> None:
@@ -136,9 +141,9 @@ class Store:
         d["is_complaint"] = int(d["is_complaint"])
         cur = self.conn.execute(
             "INSERT OR IGNORE INTO clean(doc_id,platform,native_id,entity_id,author,author_followers,"
-            "text,likes,comments,reposts,publish_ts,url,tags,content_cluster,is_complaint,backend,fetched_at)"
+            "text,likes,comments,reposts,plays,publish_ts,url,tags,content_cluster,is_complaint,backend,fetched_at)"
             " VALUES(:doc_id,:platform,:native_id,:entity_id,:author,:author_followers,:text,:likes,"
-            ":comments,:reposts,:publish_ts,:url,:tags,:content_cluster,:is_complaint,:backend,:fetched_at)",
+            ":comments,:reposts,:plays,:publish_ts,:url,:tags,:content_cluster,:is_complaint,:backend,:fetched_at)",
             d,
         )
         return cur.rowcount > 0

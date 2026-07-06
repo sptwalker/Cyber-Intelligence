@@ -18,16 +18,19 @@ class Weights:
     crisis_boost: float = 1.5     # 命中危机词的乘子
     complaint_boost: float = 1.3  # 命中投诉的乘子
     fans_cap: float = 7.0         # log10(粉丝) 封顶，压住刷号大V
+    play_weight: float = 0.02     # 播放量降权到"点赞"量级（播放≈50×点赞），再一起对数压缩
 
     def __post_init__(self):
         if self.platform is None:
             self.platform = {"heimao": 1.4, "weibo": 1.2, "zhihu": 1.1, "douyin": 1.0,
-                             "xiaohongshu": 1.0, "bilibili": 1.0}
+                             "xiaohongshu": 1.0, "bilibili": 1.0, "tieba": 1.0}
 
 
-def _influence(likes: int, comments: int, reposts: int, followers: int, w: Weights) -> float:
+def _influence(likes: int, comments: int, reposts: int, followers: int, w: Weights,
+               *, plays: int = 0) -> float:
     # (1 + …) 给"存在本身"一个下限：黑猫投诉常零互动但价值高，不能被 log(0) 归零。
-    interact = 1 + math.log1p(likes + 2 * comments + 3 * reposts)   # 转发权重最高
+    # 播放量(B站/抖音)是视频平台核心传播信号，降权后并入互动再对数压缩。
+    interact = 1 + math.log1p(likes + 2 * comments + 3 * reposts + max(plays, 0) * w.play_weight)
     fans = 1 + min(math.log10(1 + max(followers, 0)), w.fans_cap)   # log10(粉丝) 封顶，压住刷号大V
     return interact * fans
 
@@ -43,18 +46,18 @@ def risk_score(row: dict, w: Weights) -> float:
         base *= w.crisis_boost
     if row.get("is_complaint"):
         base *= w.complaint_boost
-    infl = _influence(row.get("likes", 0), row.get("comments", 0),
-                      row.get("reposts", 0), row.get("author_followers", 0), w)
+    infl = _influence(row.get("likes", 0), row.get("comments", 0), row.get("reposts", 0),
+                      row.get("author_followers", 0), w, plays=row.get("plays", 0))
     return round(base * neg * infl, 3)
 
 
 def influence_degraded(row: dict) -> bool:
-    """无任何互动/粉丝数据 → 影响力项塌缩为存在下限，风险分是"降级"的（如微博搜索无点赞/转发）。
+    """无任何互动/播放/粉丝数据 → 影响力项塌缩为存在下限，风险分是"降级"的（如微博搜索无点赞/转发）。
 
     这类分数只反映"命中危机词/投诉"，不含真实传播影响力，报告须显式标注、不可当全量真值。
     """
-    return not any((row.get("likes") or 0, row.get("comments") or 0,
-                    row.get("reposts") or 0, row.get("author_followers") or 0))
+    return not any((row.get("likes") or 0, row.get("comments") or 0, row.get("reposts") or 0,
+                    row.get("plays") or 0, row.get("author_followers") or 0))
 
 
 if __name__ == "__main__":
@@ -70,8 +73,14 @@ if __name__ == "__main__":
     assert rb > rs > 0, (rb, rs)          # 大V危机负面 > 素人负面
     assert rp == 0.0                       # 正面不计风险，哪怕互动爆表
     assert risk_score({**big, "author_followers": 10**9}, w) < rb * 3  # 封顶生效
-    # 影响力降级检测：无任何互动/粉丝 → True（微博搜索场景）
+    # 影响力降级检测：无任何互动/播放/粉丝 → True（微博搜索场景）
     assert influence_degraded({"platform": "weibo", "likes": 0, "comments": 0, "reposts": 0,
                                "author_followers": 0})
     assert not influence_degraded(big)
-    print(f"OK score: 大V={rb} 素人={rs} 正面={rp}")
+    # B站：只有播放量(无点赞/粉丝) → 不降级，且播放量越高风险越高
+    bili_lo = {"polarity": "neg", "intensity": 0.6, "platform": "bilibili", "signals": {},
+               "likes": 0, "comments": 0, "reposts": 0, "author_followers": 0, "plays": 1400}
+    bili_hi = {**bili_lo, "plays": 24_000_000}
+    assert not influence_degraded(bili_lo)                       # 有播放量=不降级
+    assert risk_score(bili_hi, w) > risk_score(bili_lo, w) > 0   # 播放量拉高影响力
+    print(f"OK score: 大V={rb} 素人={rs} 正面={rp} | B站播放量 低={risk_score(bili_lo,w)} 高={risk_score(bili_hi,w)}")
