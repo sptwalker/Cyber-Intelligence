@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 """分析层：把 clean 帖子抽成结构化情绪/信息。
 
-两条路径，同一份输出契约：
-- rule_extract：离线规则 stub，无需 API key，让整条链可测（也是断网兜底）。
-- claude_extract：单遍 Claude `extract_opinion` tool，批量、structured output。
-铁律：evidence 必须是正文逐字子串，落库前校验，不过关即丢弃并降置信（防幻觉最小护栏）。
+引擎优先级 llm > claude > rule，同一份输出契约：
+- cross_extract：deepseek 主抽 + MiniMax 交叉复核（负面/低置信），分歧进人工复核队列。
+- claude_extract：Claude `extract_opinion` tool，Haiku/Sonnet 分层路由。
+- rule_extract：离线规则 stub，无需 API key，让整条链可测（也是断网/LLM失败的兜底）。
+铁律：任何引擎失败/残缺都降级规则、绝不阻塞跑批；evidence 必须正文逐字子串，落库前校验（防幻觉）。
 """
 
 from __future__ import annotations
@@ -12,9 +13,11 @@ from __future__ import annotations
 import json
 import os
 import datetime as _dt
+import sys
 from typing import Optional
 
 from .score import Weights, risk_score, influence_degraded
+from . import llm
 
 # --- 词典（冷启动种子，后续从误报回灌迭代）---
 CRISIS_WORDS = ["维权", "退款", "翻车", "避雷", "塌房", "召回", "爆炸", "起火", "曝光", "315", "诉讼", "欺诈"]
@@ -162,6 +165,62 @@ def _validate_evidence(feat: dict, text: str) -> dict:
     return feat
 
 
+def _claude_feats(docs: list[dict]) -> dict[str, dict]:
+    """Claude 分层路由抽取（热 Sonnet / 冷 Haiku）。"""
+    out = {}
+    hot = [d for d in docs if route_model(d["text"]) == SONNET]
+    cold = [d for d in docs if route_model(d["text"]) == HAIKU]
+    if hot:
+        out.update(claude_extract(hot, model=SONNET))
+    if cold:
+        out.update(claude_extract(cold, model=HAIKU))
+    return out
+
+
+def llm_extract(provider: str, docs: list[dict]) -> dict[str, dict]:
+    """用 deepseek/MiniMax（OpenAI 兼容 JSON）批量抽取，字段对齐 EXTRACT_TOOL schema。"""
+    payload = [{"doc_id": d["doc_id"], "text": d["text"]} for d in docs]
+    user = ("对下列帖子逐条抽取，只返回 JSON：{\"items\":[{doc_id, polarity(pos/neg/neu), "
+            "intensity(0-1), confidence(0-1), is_ironic(bool), summary, evidence(正文逐字子串), "
+            "signals:{crisis,bug,feature_request,competitors[]}, aspects:[{aspect,polarity}]}]}。\n"
+            "帖子：" + json.dumps(payload, ensure_ascii=False))
+    resp = llm.chat_json(provider, _SYSTEM, user)
+    # 只保留 doc_id + 合法 polarity 的条目；残缺条目丢弃 → 下游规则兜底（防残缺 item 打崩跑批）
+    return {it["doc_id"]: it for it in resp.get("items", [])
+            if it.get("doc_id") and it.get("polarity") in ("pos", "neg", "neu")}
+
+
+def _cross(primary: dict, checker: Optional[dict]) -> dict:
+    """交叉分析：两模型极性不一致 → 置信打低并标 needs_review（喂人工复核）；一致判负 → 提高置信。"""
+    feat = dict(primary)
+    if not checker:
+        return feat
+    p, c = primary.get("polarity"), checker.get("polarity")
+    sig = dict(primary.get("signals") or {})     # 拷贝，避免 shallow copy 回写污染 primary.signals
+    feat["signals"] = sig
+    if p != c:
+        feat["confidence"] = min(feat.get("confidence", 0.5), 0.4)
+        sig["cross_disagree"] = f"{p}vs{c}"      # 两模型分歧，进复核队列
+    elif p == "neg":
+        feat["confidence"] = max(feat.get("confidence", 0.5), 0.8)
+    return feat
+
+
+def cross_extract(docs: list[dict]) -> dict[str, dict]:
+    """deepseek 主抽 + MiniMax 对负面/低置信样本交叉复核。缺 key 时自动只用可用的一家。"""
+    has_ds, has_mm = llm.available("deepseek"), llm.available("minimax")
+    primary_prov = "deepseek" if has_ds else "minimax"
+    primary = llm_extract(primary_prov, docs)
+    # 只对 主模型判负 或 低置信 的样本，用另一家交叉复核（省调用）
+    if has_ds and has_mm:
+        recheck = [d for d in docs
+                   if (primary.get(d["doc_id"], {}).get("polarity") == "neg"
+                       or primary.get(d["doc_id"], {}).get("confidence", 1.0) < 0.6)]
+        checker = llm_extract("minimax", recheck) if recheck else {}
+        return {did: _cross(primary[did], checker.get(did)) for did in primary}
+    return primary
+
+
 def analyze_pending(store, weights: Optional[Weights] = None, *, use_claude: Optional[bool] = None,
                     now: Optional[str] = None) -> int:
     """对所有缺 features 的 clean 帖做抽取并落库。返回处理条数。"""
@@ -173,25 +232,33 @@ def analyze_pending(store, weights: Optional[Weights] = None, *, use_claude: Opt
 
     if use_claude is None:
         use_claude = bool(os.getenv("ANTHROPIC_API_KEY"))
+    # 引擎优先级：deepseek/MiniMax 交叉分析 > Claude > 规则。use_claude 显式覆盖（selfcheck 用）。
+    if use_claude is False:
+        engine = "rule"
+    elif llm.available("deepseek") or llm.available("minimax"):
+        engine = "llm"
+    elif use_claude:
+        engine = "claude"
+    else:
+        engine = "rule"
+
     feats: dict[str, dict] = {}
-    if use_claude:
-        # 分层路由：热样本走 Sonnet，低价值走 Haiku（成本降一个量级）
-        hot = [d for d in docs if route_model(d["text"]) == SONNET]
-        cold = [d for d in docs if route_model(d["text"]) == HAIKU]
+    if engine != "rule":
         from .budget import guard, BudgetExceeded
         day = (now or _dt.datetime.now().astimezone().isoformat())[:10]
-        try:                             # 成本配额熔断：按实际 API 调用数计（最多两次）
-            guard(store, day, add_calls=bool(hot) + bool(cold), add_tokens=len(docs) * 1200)
+        try:
+            guard(store, day, add_calls=2, add_tokens=len(docs) * 1200)   # 保守计 2（防少计致超支）
+            feats = cross_extract(docs) if engine == "llm" else _claude_feats(docs)
         except BudgetExceeded:
-            use_claude = False           # 超限降级为规则抽取，不烧钱
-        else:
-            if hot:
-                feats.update(claude_extract(hot, model=SONNET))
-            if cold:
-                feats.update(claude_extract(cold, model=HAIKU))
+            pass                             # 超限降级为规则抽取，不烧钱
+        except Exception as e:               # LLM 网络/JSON 失败绝不阻塞跑批，降级规则
+            print(f"[{engine} 抽取失败，降级规则] {str(e)[:150]}", file=sys.stderr)
+            feats = {}
 
     for r in rows:
         feat = feats.get(r["doc_id"]) or rule_extract(dict(r))
+        if feat.get("polarity") not in ("pos", "neg", "neu"):   # LLM 残缺兜底：任何非法极性 → 规则
+            feat = rule_extract(dict(r))
         feat = _validate_evidence(feat, r["text"] or "")
         sig = feat.get("signals") or {}                  # Claude 可能返回 signals: null
         feat["signals"] = sig
@@ -220,4 +287,32 @@ if __name__ == "__main__":
     bad = _validate_evidence({"evidence": "编造的原话", "confidence": 0.9}, "真实正文")
     assert bad["evidence"] == "" and bad["confidence"] <= 0.3
     assert route_model("发热卡顿避雷退款") == SONNET and route_model("还行吧") == HAIKU  # 分层路由
-    print("OK analyze:", neg["polarity"], pos["polarity"], "| ABSA", sorted(aspects), "| 路由分层✓")
+    # 交叉分析：两模型极性分歧 → 置信打低+标 cross_disagree(进复核)；一致判负 → 提高置信
+    dis = _cross({"polarity": "neg", "confidence": 0.7}, {"polarity": "neu"})
+    assert dis["confidence"] <= 0.4 and dis["signals"]["cross_disagree"], dis
+    agree = _cross({"polarity": "neg", "confidence": 0.5}, {"polarity": "neg"})
+    assert agree["confidence"] >= 0.8 and "cross_disagree" not in agree.get("signals", {})
+    assert _cross({"polarity": "pos", "confidence": 0.9}, None)["confidence"] == 0.9  # 无复核不变
+
+    # LLM 返回残缺（缺 polarity/doc_id）被丢弃 → 下游规则兜底（不打崩）
+    llm.chat_json = lambda *a, **k: {"items": [
+        {"doc_id": "d1", "polarity": "neg", "confidence": 0.5, "evidence": ""},
+        {"doc_id": "d2", "summary": "缺polarity"},          # 丢
+        {"polarity": "pos"}]}                                # 缺doc_id 丢
+    assert set(llm_extract("deepseek", [{"doc_id": "d1", "text": "x"}])) == {"d1"}
+
+    # 关键可靠性：LLM 抽取抛异常 → analyze_pending 降级规则、全量入库，绝不 wedge
+    import os as _os
+    from .store import Store as _S, CleanDoc as _CD
+    _os.environ["DEEPSEEK_API_KEY"] = "x"                    # 使 engine=llm
+    def _boom(docs):
+        raise RuntimeError("网络炸了")
+    globals()["cross_extract"] = _boom
+    _st = _S(":memory:")
+    _st.add_clean(_CD.build(platform="weibo", entity_id="e", native_id="n1", text="发热退款避雷"))
+    _n = analyze_pending(_st, now="2026-07-06T10:00:00+08:00")
+    _os.environ.pop("DEEPSEEK_API_KEY")
+    assert _n == 1 and _st.conn.execute("SELECT COUNT(*) FROM features").fetchone()[0] == 1, \
+        "LLM 失败必须降级规则入库，不能空转"
+    print("OK analyze:", neg["polarity"], pos["polarity"], "| ABSA", sorted(aspects),
+          "| 路由分层✓ | 交叉分析✓ | LLM失败降级✓")

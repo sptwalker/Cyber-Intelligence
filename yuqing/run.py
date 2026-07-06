@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """在线跑批驱动：collect → analyze → score → report → 飞书。
 
-需要：opencli 已登录 Chrome / ANTHROPIC_API_KEY（否则退化为规则抽取）/ FEISHU_WEBHOOK（否则只落库）。
+需要：opencli 已登录 Chrome。分析引擎优先级：deepseek+MiniMax 交叉分析（DEEPSEEK_API_KEY/
+MINIMAX_API_KEY）> Claude（ANTHROPIC_API_KEY）> 规则兜底。FEISHU_WEBHOOK 无则只落库。
 无人值守常驻见 yuqing.scheduler（serve 循环 + deadman 心跳 + 登录态失效告警）。
 """
 
