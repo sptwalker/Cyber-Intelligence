@@ -7,7 +7,10 @@ entities:
   - id: youdoo
     type: self
     aliases: ["Youdoo Box", "Youdoo", "youdoo box", "有度盒子"]   # aliases[0] 作主搜索词
-    must_not: []                                                  # 品牌词独有，暂无同名歧义
+    # must_not=同名歧义"别的实体"的硬排除词，命中即判非本品(即便含别名)。
+    # 只放同名歧义(Youdoo↔Doo Prime 外汇平台)，切勿放竞品名——竞品比较帖是有价值的，
+    # 且纯竞品新闻靠"不含别名"already被过滤。竞品请在下方 competitor 实体单独监控。
+    must_not: ["Doo Prime", "DooPrime"]
     crisis_boost: ["退款", "维权", "翻车", "召回", "避雷", "卡顿", "死机", "退货"]
 
   - id: kinhank

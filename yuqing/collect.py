@@ -20,6 +20,7 @@ from typing import Optional
 
 from .store import CleanDoc, Store
 from . import health
+from . import relevance
 
 # Windows 上 opencli 是 .CMD 脚本无 .exe，subprocess 裸名 CreateProcess 找不到（不套 PATHEXT）。
 # 用 shutil.which 解析全路径；mac/Linux 返回普通路径，同样正确。
@@ -199,8 +200,13 @@ def _fetch_heimao(keyword: str, limit: int, *, pages: int = 1) -> list[dict]:
 def collect_platform(store: Store, *, run_id: str, entity_id: str, platform: str, keyword: str,
                      now: str, limit: int = 50, fixture: Optional[list[dict]] = None,
                      backend: str = "opencli", entry: str = "search",
-                     user: Optional[str] = None) -> tuple[int, str]:
-    """采集一个 (实体,平台)。返回 (新入库条数, 健康三态)。fixture 非空则走离线。"""
+                     user: Optional[str] = None,
+                     aliases: Optional[list] = None, must_not: Optional[list] = None) -> tuple[int, str]:
+    """采集一个 (实体,平台)。返回 (新入库条数, 健康三态)。fixture 非空则走离线。
+
+    aliases/must_not 做串味过滤：命中否定词或(search入口下)一个别名都不含 → 判无关，
+    留原始层审计但不进 clean。无 aliases 时不强求含别名（只挡否定词）。
+    """
     try:
         if fixture is not None:
             items = fixture
@@ -217,21 +223,33 @@ def collect_platform(store: Store, *, run_id: str, entity_id: str, platform: str
 
     # 增量水位：只用 ISO 日期串比较，跳过严格早于水位的内容（幂等去重仍由 UNIQUE 兜底，
     # 宁可重抓不可漏；非 ISO/数字时间戳一律不参与水位，避免污染导致静默漏抓）。
+    # 只有 opencli 模糊搜索适配器(weibo/zhihu/…)才易串味需强制含别名；heimao(浏览器桥，
+    # 搜索已按关键词定向、extract 仅标题) 与 user-posts(定向账号) 不强求，否则会漏掉真实投诉。
+    require = (entry == "search") and bool(aliases) and (platform in OPENCLI_SITE)
     watermark = store.get_watermark(entity_id, platform, entry)
     max_ts = watermark or ""
     inserted = 0
     n_valid = 0                                  # 含有效 native_id、可解析的条数
+    n_mustnot = 0                                # 命中否定词被过滤
+    n_noalias = 0                                # 不含任何别名被过滤
     for it in items:
         doc = normalize(platform, entity_id, it, backend, now)
         if not doc.native_id:
             continue
         n_valid += 1
+        store.add_raw(doc, it)                   # 全部留原始层审计（含被过滤的）
+        v = relevance.judge(doc.text, aliases or [], must_not, require_alias=require)
+        if not v.relevant:                       # 串味/无关：不进 clean
+            if v.reason.startswith("must_not"):
+                n_mustnot += 1
+            else:
+                n_noalias += 1
+            continue
         ts = doc.publish_ts if _ISO_TS.match(doc.publish_ts) else ""
         if watermark and ts and ts < watermark:
             continue                             # 严格早于水位，跳过
         if ts > max_ts:
             max_ts = ts
-        store.add_raw(doc, it)
         if store.add_clean(doc):                 # True=新插入（UNIQUE 去重）
             inserted += 1
     if max_ts and max_ts != watermark:
@@ -243,6 +261,9 @@ def collect_platform(store: Store, *, run_id: str, entity_id: str, platform: str
     if status == "ok" and len(items) > 0 and n_valid == 0:
         state = "suspect"
         note = note or f"字段映射失败：抓到 {len(items)} 条但 0 条含有效ID（平台格式可能变了）"
+    n_offtopic = n_mustnot + n_noalias
+    if n_offtopic:
+        note = (note + "；" if note else "") + f"过滤 must_not{n_mustnot}/无别名{n_noalias}(共{n_offtopic}/{n_valid})"
     store.log_run(run_id, platform, entity_id, len(items), status, state, note, now)
     store.commit()
     return inserted, state
@@ -256,10 +277,13 @@ def collect_all(store: Store, watch: dict, *, run_id: str, now: str,
     for ent in watch["entities"]:
         eid = ent["id"]
         kw = ent.get("aliases", [ent["id"]])[0]
+        aliases = ent.get("aliases", [])
+        must_not = ent.get("must_not", [])
         for platform in watch["platforms"]:
             fx = (fixtures.get(platform) or {}).get(eid) if fixtures else None
             _, state = collect_platform(store, run_id=run_id, entity_id=eid, platform=platform,
-                                        keyword=kw, now=now, fixture=fx)
+                                        keyword=kw, now=now, fixture=fx,
+                                        aliases=aliases, must_not=must_not)
             # 一个平台多实体时取最差态
             health_by_platform[platform] = health.worst(health_by_platform.get(platform), state)
         # user-posts 入口：跟踪指定 KOL/官号（track_users: ["weibo:12345", ...]）
@@ -267,7 +291,8 @@ def collect_all(store: Store, watch: dict, *, run_id: str, now: str,
             site, _, uid = spec.partition(":")
             if site in OPENCLI_SITE and uid:
                 collect_platform(store, run_id=run_id, entity_id=eid, platform=site,
-                                 keyword=kw, now=now, entry="user-posts", user=uid)
+                                 keyword=kw, now=now, entry="user-posts", user=uid,
+                                 aliases=aliases, must_not=must_not)
     return health_by_platform
 
 

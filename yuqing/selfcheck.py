@@ -16,7 +16,7 @@ from .store import Store, doc_id_for
 
 WATCH = {
     "platforms": ["weibo", "zhihu", "heimao"],
-    "entities": [{"id": "myproduct", "type": "self", "aliases": ["星海手机"]}],
+    "entities": [{"id": "myproduct", "type": "self", "aliases": ["星海手机", "星海Pro"]}],
 }
 
 # fixtures：模拟 opencli/Jina 的原始返回（含一条重复 id 测去重）
@@ -231,6 +231,28 @@ def demo() -> None:
     tl = insights.timeline(ms, "退款")
     assert tl and all(tl[i]["time"] <= tl[i + 1]["time"] for i in range(len(tl) - 1)), tl
 
+    # v1-A) 串味过滤：命中 must_not / 无别名 的不进 clean，但原始层留全量审计
+    rw = {"platforms": ["weibo"], "entities": [
+        {"id": "b", "type": "self", "aliases": ["星海手机"], "must_not": ["Doo Prime"]}]}
+    rf = {"weibo": {"b": [
+        {"id": "ok1", "text": "星海手机发热退款", "url": "u1"},
+        {"id": "bad1", "text": "警惕Doo Prime外汇平台账户被封", "url": "u2"},
+        {"id": "bad2", "text": "今天天气不错随便发一条", "url": "u3"}]}}
+    rs2 = Store(":memory:")
+    collect_all(rs2, rw, run_id="r", now="2026-07-06T10:00:00+08:00", fixtures=rf)
+    kept = [r["native_id"] for r in rs2.conn.execute("SELECT native_id FROM clean ORDER BY native_id")]
+    assert kept == ["ok1"], f"串味过滤：只应保留相关 ok1，实际 {kept}"
+    assert rs2.conn.execute("SELECT COUNT(*) FROM raw").fetchone()[0] == 3, "原始层应留全量审计"
+
+    # v1-A) heimao 不强求含别名：投诉标题常省略品牌名，不能被 no_alias 误杀（防漏真实投诉）
+    hf = {"heimao": {"b": [{"id": "c9", "text": "进水要求退款商家不理", "url": "u"}]}}
+    hs = Store(":memory:")
+    from .collect import collect_platform as _cp
+    _cp(hs, run_id="r", entity_id="b", platform="heimao", keyword="星海手机",
+        now="2026-07-06T10:00:00+08:00", fixture=hf["heimao"]["b"],
+        aliases=["星海手机"], must_not=[])
+    assert hs.conn.execute("SELECT COUNT(*) FROM clean").fetchone()[0] == 1, "黑猫投诉标题无品牌名不应被误杀"
+
     print("OK selfcheck —— 整条链跑通：")
     print(f"  去重 clean={n_clean}｜features 全带 evidence 子串｜Top负面={top['native_id']}(risk={top['risk']})")
     print(f"  报告数字与聚合一致、引用校验通过、伪造引用被抓")
@@ -239,6 +261,7 @@ def demo() -> None:
     print(f"  Phase1：实时预警P0+冷却✓ 静默失败预警✓ 成本熔断✓ 竞品SOV✓ 增量水位✓")
     print(f"  Phase2：ABSA方面级✓ 稳健z-score异常✓ 上升话题✓ 时序看板✓ 分层路由✓")
     print(f"  Phase3：老板日报✓ AI问答(RAG-lite)✓ 诉求→需求闭环✓ 事件时间线✓")
+    print(f"  v1-A：串味过滤(否定词/别名)✓ 原始层审计留全量✓")
     print("\n--- 生成的周报（happy path，节选）---\n")
     print(md[:900])
 
