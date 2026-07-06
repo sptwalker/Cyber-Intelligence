@@ -13,13 +13,14 @@ import urllib.request
 from . import config
 
 # 每个 provider 的 env 键与默认值（OpenAI 兼容 /chat/completions）
+# json_mode: 是否支持 response_format=json_object（DeepSeek 支持；MiniMax 不支持，发了会 400）
 _PROVIDERS = {
     "deepseek": {"key": "DEEPSEEK_API_KEY", "base": "DEEPSEEK_BASE_URL",
                  "base_def": "https://api.deepseek.com", "model": "DEEPSEEK_MODEL",
-                 "model_def": "deepseek-chat"},
+                 "model_def": "deepseek-chat", "json_mode": True},
     "minimax": {"key": "MINIMAX_API_KEY", "base": "MINIMAX_BASE_URL",
                 "base_def": "https://api.minimaxi.com/v1", "model": "MINIMAX_MODEL",
-                "model_def": "MiniMax-Text-01"},
+                "model_def": "MiniMax-Text-01", "json_mode": False},
 }
 
 
@@ -28,18 +29,36 @@ def available(provider: str) -> bool:
     return bool(p and config.resolve(p["key"]))
 
 
-def _build_payload(model: str, system: str, user: str) -> dict:
-    return {"model": model,
-            "messages": [{"role": "system", "content": system},
-                         {"role": "user", "content": user}],
-            "response_format": {"type": "json_object"},
-            "temperature": 0.2}
+def _build_payload(model: str, system: str, user: str, *, json_mode: bool = True) -> dict:
+    p = {"model": model,
+         "messages": [{"role": "system", "content": system},
+                      {"role": "user", "content": user}],
+         "temperature": 0.2}
+    if json_mode:                        # 仅支持的 provider 才发（MiniMax 发了会 400）
+        p["response_format"] = {"type": "json_object"}
+    return p
+
+
+def _loads_lenient(s: str) -> dict:
+    """宽松解析：不强制 JSON 模式的 provider 可能包 ```json 围栏或散文，抠出最外层 {…}。"""
+    s = (s or "").strip()
+    if s.startswith("```"):              # 去 markdown 代码围栏
+        s = s.strip("`")
+        if s[:4].lower() == "json":
+            s = s[4:]
+        s = s.strip()
+    try:
+        return json.loads(s)
+    except Exception:
+        i, j = s.find("{"), s.rfind("}")
+        if i != -1 and j > i:
+            return json.loads(s[i:j + 1])
+        raise
 
 
 def _parse_content(resp: dict) -> dict:
     """从 OpenAI 兼容响应取出 message.content 并解析为 JSON。"""
-    content = resp["choices"][0]["message"]["content"]
-    return json.loads(content)
+    return _loads_lenient(resp["choices"][0]["message"]["content"])
 
 
 def chat_json(provider: str, system: str, user: str, *, timeout: int = 90) -> dict:
@@ -50,7 +69,7 @@ def chat_json(provider: str, system: str, user: str, *, timeout: int = 90) -> di
         raise RuntimeError(f"{cfg['key']} 未配置")
     url = (config.resolve(cfg["base"]) or cfg["base_def"]).rstrip("/") + "/chat/completions"
     model = config.resolve(cfg["model"]) or cfg["model_def"]
-    body = json.dumps(_build_payload(model, system, user)).encode("utf-8")
+    body = json.dumps(_build_payload(model, system, user, json_mode=cfg.get("json_mode", True))).encode("utf-8")
     req = urllib.request.Request(url, data=body, method="POST",
                                  headers={"Authorization": f"Bearer {key}",
                                           "Content-Type": "application/json"})
@@ -77,10 +96,15 @@ if __name__ == "__main__":
         if available(prov):
             print(chat_json(prov, "你返回JSON", '返回 {"ok":true}'))
     else:
-        # 离线自检：payload 构造 + 响应解析（纯函数，不触网）
-        pl = _build_payload("deepseek-chat", "sys", "usr")
-        assert pl["response_format"]["type"] == "json_object" and pl["messages"][1]["content"] == "usr"
+        # 离线自检：payload 构造（按 provider 决定 response_format）+ 宽松 JSON 解析
+        assert _build_payload("m", "s", "u", json_mode=True).get("response_format")
+        assert "response_format" not in _build_payload("m", "s", "u", json_mode=False)  # MiniMax
+        assert _PROVIDERS["deepseek"]["json_mode"] and not _PROVIDERS["minimax"]["json_mode"]
+        # 宽松解析：纯JSON / ```json围栏 / 前后包散文 都能抠出
+        assert _loads_lenient('{"a":1}')["a"] == 1
+        assert _loads_lenient('```json\n{"a":2}\n```')["a"] == 2
+        assert _loads_lenient('好的，结果：{"items":[{"polarity":"neg"}]} 完毕')["items"][0]["polarity"] == "neg"
         got = _parse_content({"choices": [{"message": {"content": '{"items":[{"polarity":"neg"}]}'}}]})
         assert got["items"][0]["polarity"] == "neg"
         assert available("deepseek") in (True, False)
-        print("OK llm: payload 构造 + 响应解析 正确（provider 连通需带 key ping）")
+        print("OK llm: payload按provider配response_format + 宽松JSON解析 正确（连通需带 key ping）")
