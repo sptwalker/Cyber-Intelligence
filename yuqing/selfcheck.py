@@ -299,6 +299,17 @@ def demo() -> None:
     assert not dashboard._write_allowed(_mk(Host="evil.com"))                         # DNS rebinding
     assert not dashboard._write_allowed(_mk(Host="127.0.0.1:8000", Origin="http://evil.com"))
 
+    # 报告 HTML 渲染：标题/表格/链接转 HTML；XSS 转义；javascript: 链接被挡
+    h = dashboard.md_to_html("# 标题\n> 提示\n\n| 平台 | 风险 |\n|---|---|\n| weibo | 5 |\n"
+                             "**粗体** [原帖](https://weibo.com/1) [坏](javascript:alert(1)) <script>x</script>")
+    assert "<h1>标题</h1>" in h and "<blockquote>提示</blockquote>" in h
+    assert "<table>" in h and "<th>平台</th>" in h and "<td>weibo</td>" in h
+    assert "<strong>粗体</strong>" in h and "href='https://weibo.com/1'" in h
+    assert "javascript:" not in h and "&lt;script&gt;" in h            # 危险链接挡掉+脚本转义
+    # 精简通知格式：含"报告已更新"+链接，不含报告正文
+    from .report import report_url
+    assert "report?run_id=r1" in report_url("r1")
+
     print("OK selfcheck —— 整条链跑通：")
     print(f"  去重 clean={n_clean}｜features 全带 evidence 子串｜Top负面={top['native_id']}(risk={top['risk']})")
     print(f"  报告数字与聚合一致、引用校验通过、伪造引用被抓")
@@ -312,6 +323,7 @@ def demo() -> None:
     print(f"  v1-C：心跳前移(失败不算存活)✓ [deadman/登录态告警见 scheduler selftest]")
     print(f"  v1-D：影响力降级标注(⚠降级)✓ 报告可信度note✓ SQLite WAL✓")
     print(f"  配置页：飞书/AI模型表单✓ 密钥脱敏不回显✓ 保存生效✓")
+    print(f"  报告HTML渲染✓ XSS转义/挡js链接✓ 飞书精简通知(链接)✓")
     print("\n--- 生成的周报（happy path，节选）---\n")
     print(md[:900])
 

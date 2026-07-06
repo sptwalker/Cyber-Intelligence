@@ -22,6 +22,7 @@ FIELDS = [
     ("MINIMAX_BASE_URL", "MiniMax Base URL（留空=默认）", False),
     ("MINIMAX_MODEL", "MiniMax 模型（留空=默认）", False),
     ("ANTHROPIC_API_KEY", "Claude API Key（可选）", True),
+    ("DASHBOARD_URL", "报告页地址（飞书通知里的链接，留空=http://127.0.0.1:8000）", False),
     ("YUQING_MAX_CALLS", "每日 LLM 调用上限", False),
     ("YUQING_MAX_TOKENS", "每日 Token 上限", False),
 ]

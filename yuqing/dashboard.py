@@ -9,6 +9,7 @@ ponytail: 数据视图只读 → stdlib http.server 直读 SQLite，零新依赖
 from __future__ import annotations
 
 import html
+import re
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse, parse_qs
 
@@ -104,12 +105,64 @@ def render_index(store: Store) -> str:
     return _page("舆情监控看板", body)
 
 
+_LINK = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
+_BOLD = re.compile(r"\*\*([^*]+)\*\*")
+
+
+def _inline(s: str) -> str:
+    """行内 markdown → HTML：先转义防 XSS，再还原 链接/粗体。href 仅允许 http(s)/相对路径。"""
+    s = html.escape(s)
+    def _lk(m):
+        text, url = m.group(1), m.group(2)
+        if url.startswith(("http://", "https://", "/")):   # 挡 javascript: 等，非法链接只留文字
+            return f"<a href='{url}' target=_blank rel=noopener>{text}</a>"
+        return text
+    s = _LINK.sub(_lk, s)
+    s = _BOLD.sub(r"<strong>\1</strong>", s)
+    return s
+
+
+def _md_table(rows: list) -> str:
+    def cells(r): return [c.strip() for c in r.strip().strip("|").split("|")]
+    def is_sep(r): return set(r.replace("|", "").strip()) <= set("-: ") and "-" in r
+    header = cells(rows[0])
+    th = "".join(f"<th>{_inline(c)}</th>" for c in header)
+    body = "".join("<tr>" + "".join(f"<td>{_inline(c)}</td>" for c in cells(r)) + "</tr>"
+                   for r in rows[1:] if not is_sep(r))
+    return f"<table><tr>{th}</tr>{body}</table>"
+
+
+def md_to_html(md: str) -> str:
+    """把本系统生成的报告 markdown 渲染成 HTML（针对固定子集：# ## > | --- ** []()）。"""
+    lines, out, i = md.split("\n"), [], 0
+    while i < len(lines):
+        st = lines[i].strip()
+        if not st:
+            i += 1; continue
+        if st.startswith("## "):
+            out.append(f"<h2>{_inline(st[3:])}</h2>")
+        elif st.startswith("# "):
+            out.append(f"<h1>{_inline(st[2:])}</h1>")
+        elif st.startswith(">"):
+            out.append(f"<blockquote>{_inline(st.lstrip('> '))}</blockquote>")
+        elif st.startswith("---"):
+            out.append("<hr>")
+        elif st.startswith("|"):
+            block = []
+            while i < len(lines) and lines[i].strip().startswith("|"):
+                block.append(lines[i].strip()); i += 1
+            out.append(_md_table(block)); continue
+        else:
+            out.append(f"<p>{_inline(st)}</p>")
+        i += 1
+    return "\n".join(out)
+
+
 def render_report(store: Store, run_id: str) -> str:
     row = store.conn.execute("SELECT markdown FROM reports WHERE run_id=?", (run_id,)).fetchone()
     if not row:
         return _page("未找到", "<p>未找到该报告。<a href='/'>返回</a></p>")
-    # ponytail: 只读内部页，原始 markdown 用 <pre> 展示够用；富渲染要 markdown 库，不值当
-    return _page(run_id, f"<p><a href='/'>← 返回</a></p><pre>{html.escape(row['markdown'])}</pre>")
+    return _page(run_id, f"<p><a href='/'>← 返回看板</a></p>{md_to_html(row['markdown'])}")
 
 
 def render_config(*, saved: bool = False, test_msg: str = "") -> str:
