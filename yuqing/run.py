@@ -2,7 +2,7 @@
 """在线跑批驱动：collect → analyze → score → report → 飞书。
 
 需要：opencli 已登录 Chrome / ANTHROPIC_API_KEY（否则退化为规则抽取）/ FEISHU_WEBHOOK（否则只落库）。
-ponytail: MVP 手动/cron 触发即可，APScheduler 定时留到 Phase 1 无人值守。
+无人值守常驻见 yuqing.scheduler（serve 循环 + deadman 心跳 + 登录态失效告警）。
 """
 
 from __future__ import annotations

@@ -262,6 +262,12 @@ def demo() -> None:
     st = store.review_stats()
     assert st["reviewed"] == 1 and st["machine_wrong"] == 1, st   # verdict!=ok → 机器判错
 
+    # v1-C) 心跳：失败不前移 last_success，成功才前移（deadman 据此判存活）
+    store.record_heartbeat("2026-07-06T09:00:00+08:00", "error")
+    assert store.get_heartbeat()["last_success"] == ""
+    store.record_heartbeat("2026-07-06T10:00:00+08:00", "ok")
+    assert store.get_heartbeat()["last_success"] == "2026-07-06T10:00:00+08:00"
+
     print("OK selfcheck —— 整条链跑通：")
     print(f"  去重 clean={n_clean}｜features 全带 evidence 子串｜Top负面={top['native_id']}(risk={top['risk']})")
     print(f"  报告数字与聚合一致、引用校验通过、伪造引用被抓")
@@ -272,6 +278,7 @@ def demo() -> None:
     print(f"  Phase3：老板日报✓ AI问答(RAG-lite)✓ 诉求→需求闭环✓ 事件时间线✓")
     print(f"  v1-A：串味过滤(否定词/别名)✓ 原始层审计留全量✓")
     print(f"  v1-B：复核队列(低置信/高风险入队)✓ 标注出队✓ 质检KPI✓")
+    print(f"  v1-C：心跳前移(失败不算存活)✓ [deadman/登录态告警见 scheduler selftest]")
     print("\n--- 生成的周报（happy path，节选）---\n")
     print(md[:900])
 

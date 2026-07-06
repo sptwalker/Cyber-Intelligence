@@ -105,6 +105,9 @@ CREATE TABLE IF NOT EXISTS watermark (
 );
 CREATE TABLE IF NOT EXISTS alerts (cluster_key TEXT, level TEXT, doc_id TEXT, summary TEXT, ts TEXT);
 CREATE TABLE IF NOT EXISTS usage (day TEXT PRIMARY KEY, calls INTEGER, tokens INTEGER);
+CREATE TABLE IF NOT EXISTS heartbeat (
+    id INTEGER PRIMARY KEY, last_start TEXT, last_success TEXT, last_status TEXT, note TEXT
+);
 """
 
 
@@ -244,6 +247,21 @@ class Store:
         r = self.conn.execute(
             "SELECT COUNT(*) n, SUM(CASE WHEN verdict<>'ok' THEN 1 ELSE 0 END) wrong FROM review").fetchone()
         return {"reviewed": r["n"] or 0, "machine_wrong": r["wrong"] or 0}
+
+    # --- v1-C: 心跳（无人值守存活探测）---
+    def record_heartbeat(self, ts: str, status: str, note: str = "") -> None:
+        """每次跑批后记录心跳。last_success 仅在成功时前移，供 deadman 判定'多久没成功了'。"""
+        prev = self.conn.execute("SELECT last_success FROM heartbeat WHERE id=1").fetchone()
+        last_success = ts if status == "ok" else (prev["last_success"] if prev else "")
+        self.conn.execute(
+            "INSERT OR REPLACE INTO heartbeat(id,last_start,last_success,last_status,note) "
+            "VALUES(1,?,?,?,?)", (ts, last_success, status, note))
+        self.conn.commit()
+
+    def get_heartbeat(self) -> Optional[dict]:
+        r = self.conn.execute(
+            "SELECT last_start,last_success,last_status,note FROM heartbeat WHERE id=1").fetchone()
+        return dict(r) if r else None
 
     def commit(self):
         self.conn.commit()
