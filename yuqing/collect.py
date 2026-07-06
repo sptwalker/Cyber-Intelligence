@@ -29,7 +29,7 @@ _OPENCLI = shutil.which("opencli") or "opencli"
 # 平台名 → opencli site。黑猫(heimao)无 opencli 后端，走 browser 通用桥（见 _fetch_heimao）。
 OPENCLI_SITE = {"weibo": "weibo", "zhihu": "zhihu", "douyin": "douyin",
                 "xiaohongshu": "xiaohongshu", "bilibili": "bilibili", "tieba": "tieba",
-                "weixin": "weixin"}   # weixin=公众号(搜狗微信搜索,免登录)；视频号只能发布不能读,不接
+                "weixin": "weixin", "hupu": "hupu", "smzdm": "smzdm"}   # 视频号只能发布,不接
 
 _COMPLAINT_TRIGGERS = ["投诉", "维权", "退款", "退货", "赔偿", "曝光", "避雷", "翻车", "召回", "欺诈"]
 _ISO_TS = re.compile(r"^\d{4}-\d{2}-\d{2}")   # 仅 ISO 日期串可参与水位比较
@@ -62,7 +62,7 @@ _GENERIC_SEG = {"", "link", "index", "s", "detail", "view", "article", "search"}
 
 def _derive_id(item: dict) -> str:
     """取平台原生 id；无显式 id 时从 url 末段派生；末段泛化(如搜狗 /link)时用 标题+时间 稳定哈希。"""
-    nid = _pick(item, "id", "note_id", "mid", "aweme_id", "rid", default="")
+    nid = _pick(item, "id", "note_id", "mid", "aweme_id", "rid", "tid", default="")   # tid=虎扑
     if nid:
         return str(nid)
     u = _pick(item, "url", "link", "note_url", default="")
@@ -89,11 +89,13 @@ def normalize(platform: str, entity_id: str, item: dict, backend: str, fetched_a
         text=text,
         author=_pick(user, "nickname", "nick_name", "name", default=""),
         author_followers=_to_int(_pick(user, "followers", "fans", "fans_count", default=0)),
-        likes=_to_int(_pick(item, "like_count", "liked_count", "digg_count", "votes", "likes", default=0)),
-        comments=_to_int(_pick(item, "comment_count", "comments", "comment", default=0)),
+        likes=_to_int(_pick(item, "like_count", "liked_count", "digg_count", "votes", "likes",
+                            "lights", "zhi_count", default=0)),   # lights=虎扑点亮, zhi_count=值得买"值"
+        comments=_to_int(_pick(item, "comment_count", "comments", "comment", "replies", default=0)),  # replies=虎扑
         reposts=_to_int(_pick(item, "repost_count", "share_count", "forward_count", "shares", default=0)),
         plays=_to_int(_pick(item, "plays", "score", "play_count", "views", default=0)),   # B站score=播放量
-        publish_ts=str(_pick(item, "created_at", "time", "publish_time", "date", "published_at", default="")),
+        publish_ts=str(_pick(item, "created_at", "time", "publish_time", "date", "published_at",
+                            "updated_at", default="")),
         url=_pick(item, "url", "link", "note_url", default=""),
         tags=item.get("tags") or item.get("tag_list") or [],
         is_complaint=is_complaint, backend=backend, fetched_at=fetched_at,

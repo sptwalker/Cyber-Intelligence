@@ -1,7 +1,8 @@
 # 舆情监控对象配置 —— single source of truth（git 版本化、可 review、可回滚）
 # 自有产品 Youdoo Box + 竞品 KINHANK；平台 微博/知乎/黑猫。
 
-platforms: [weibo, zhihu, xiaohongshu, douyin, bilibili, tieba, weixin, heimao]   # weixin=公众号(免登录); heimao=黑猫浏览器桥
+platforms: [weibo, zhihu, xiaohongshu, douyin, bilibili, tieba, hupu, smzdm, weixin, heimao]
+# hupu虎扑/tieba贴吧/smzdm值得买/weixin公众号 免登录; heimao黑猫走浏览器桥
 
 entities:
   - id: youdoo
