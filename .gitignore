@@ -1,8 +1,12 @@
 # 舆情系统仓库：只跟踪 yuqing/，忽略 Agent-Reach 克隆与运行产物
 Agent-Reach/
+extension/
 **/__pycache__/
 *.pyc
 *.db
 .venv/
 heimao_jina.md
 _seed_demo.py
+_seed.py
+_demo.py
+probe_live.py
