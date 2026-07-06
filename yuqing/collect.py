@@ -81,7 +81,7 @@ def normalize(platform: str, entity_id: str, item: dict, backend: str, fetched_a
         author_followers=_to_int(_pick(user, "followers", "fans", "fans_count", default=0)),
         likes=_to_int(_pick(item, "like_count", "liked_count", "digg_count", "votes", "likes", default=0)),
         comments=_to_int(_pick(item, "comment_count", "comments", "comment", default=0)),
-        reposts=_to_int(_pick(item, "repost_count", "share_count", "forward_count", default=0)),
+        reposts=_to_int(_pick(item, "repost_count", "share_count", "forward_count", "shares", default=0)),
         publish_ts=str(_pick(item, "created_at", "time", "publish_time", "date", "published_at", default="")),
         url=_pick(item, "url", "link", "note_url", default=""),
         tags=item.get("tags") or item.get("tag_list") or [],
@@ -203,10 +203,10 @@ def _fetch_heimao(keyword: str, limit: int, *, pages: int = 1) -> list[dict]:
             url += f"&page={page}"
         _opencli_browser(session, "open", url)
         md = ""
-        for _ in range(3):                       # 列表可能异步渲染，重试几次再放弃
-            time.sleep(1.5)
+        for _ in range(4):                       # 等页面就绪：有投诉链接 或 登录头("退出")已渲染
+            time.sleep(1.5)                       # 否则空结果页可能在头部渲染前被抓，误判登录墙
             md = _opencli_browser(session, "extract")
-            if _HEIMAO_LINK.search(md):
+            if _HEIMAO_LINK.search(md) or "退出" in md:
                 break
         for it in parse_heimao_markdown(md):
             if it["id"] not in seen:
@@ -280,10 +280,6 @@ def collect_platform(store: Store, *, run_id: str, entity_id: str, platform: str
 
     state = health.assess(store, platform=platform, entity_id=entity_id,
                           n_fetched=len(items), status=status)
-    # 黑猫：登录正常但该词无投诉 = 正常空（出海品牌黑猫常为0）。登录墙会 raise→status=error→fail，
-    # 所以这里 status==ok 的空一定是"真无投诉"，不判 fail（否则每次都误红条）。
-    if platform == "heimao" and status == "ok" and len(items) == 0:
-        state = "ok"
     # 抓到了但一条都解析不出 → 多半平台字段格式变了，绝不能顶着 ok 静默丢数据
     if status == "ok" and len(items) > 0 and n_valid == 0:
         state = "suspect"

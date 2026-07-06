@@ -15,12 +15,17 @@ DROP_RATIO = 0.30  # 低于近期基线的 30% 判 suspect
 
 
 def assess(store, *, platform: str, entity_id: str, n_fetched: int, status: str) -> str:
-    """单次 (实体,平台) 采集的健康态。"""
+    """单次 (实体,平台) 采集的健康态。
+
+    关键前提：登录失效在我们所有平台都是**显式**的——opencli 适配器返回 AUTH_REQUIRED→异常，
+    黑猫登录墙(无"退出")→raise，都走 status!='ok'→fail。所以"成功但 0 结果"= 该词真没内容
+    （冷门/出海品牌常见），不该无脑判 fail 否则红条泛滥、静默失败机制反被稀释。
+    """
     if status != "ok":
-        return "fail"
-    if n_fetched == 0:
-        return "fail"
+        return "fail"                                    # 采集异常/登录失效(显式)
     baseline = store.platform_baseline(platform, entity_id)
+    if n_fetched == 0:
+        return "suspect" if baseline else "ok"           # 有历史却归零=可疑；无历史=真空
     if baseline and n_fetched < baseline * DROP_RATIO:
         return "suspect"
     return "ok"
@@ -55,5 +60,15 @@ if __name__ == "__main__":
     assert banner({"weibo": "ok", "zhihu": "ok"}) is None
     b = banner({"weibo": "ok", "zhihu": "fail", "heimao": "suspect"})
     assert b and "zhihu" in b and "heimao" in b
+
+    # assess：登录失效(status!=ok)→fail；0结果无基线→ok(真空)；0结果有基线→suspect(归零可疑)
+    class _S:
+        def __init__(self, base): self._b = base
+        def platform_baseline(self, p, e): return self._b
+    assert assess(_S(None), platform="douyin", entity_id="e", n_fetched=0, status="ok") == "ok"
+    assert assess(_S(40), platform="weibo", entity_id="e", n_fetched=0, status="ok") == "suspect"
+    assert assess(_S(None), platform="weibo", entity_id="e", n_fetched=0, status="error") == "fail"
+    assert assess(_S(40), platform="weibo", entity_id="e", n_fetched=3, status="ok") == "suspect"  # 骤降
+    assert assess(_S(None), platform="weibo", entity_id="e", n_fetched=5, status="ok") == "ok"
     # 控制台可能是 GBK，去掉 emoji 再打印（红条本体在报告里仍是 UTF-8 完整的）
-    print("OK health: 三态与红条生效\n ", b.replace("⚠️", "[告警]"))
+    print("OK health: 三态/红条/assess(登录失效vs真空vs骤降) 生效\n ", b.replace("⚠️", "[告警]"))
