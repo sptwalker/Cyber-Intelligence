@@ -9,6 +9,7 @@ ponytail: 数据视图只读 → stdlib http.server 直读 SQLite，零新依赖
 from __future__ import annotations
 
 import html
+import json
 import re
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse, parse_qs
@@ -103,6 +104,7 @@ def render_index(store: Store) -> str:
     body = (
         "<h1>舆情监控看板 <span class=muted>（数据只读）</span> "
         "<a href='/exec' style='font-size:14px'>📊 高管概览</a> "
+        "<a href='/dash' style='font-size:14px'>📈 战情室</a> "
         "<a href='/config' style='font-size:14px'>⚙️ 系统配置</a></h1>" + banner + review_line +
         "<h2>采集健康（各平台最近一次）</h2>"
         "<table><tr><th>平台</th><th>状态</th><th>条数</th><th>时间</th><th>备注</th></tr>"
@@ -168,6 +170,82 @@ def md_to_html(md: str) -> str:
             out.append(f"<p>{_inline(st)}</p>")
         i += 1
     return "\n".join(out)
+
+
+def chart_data(store: Store, entity_id: str, watch: dict | None = None) -> dict:
+    """图表页数据(纯JSON,供 Chart.js fetch)：情绪/声量趋势、方面口碑、话题、SOV、BHI趋势。"""
+    from . import analytics
+    from .report import aggregate, sov as sov_fn
+    ser = analytics.daily_series(store, entity_id)
+    ab = analytics.aspect_breakdown(store, entity_id)
+    m = aggregate(store, entity_id)
+    bh = analytics.brand_health(store, entity_id)
+    data = {
+        "days": [d["day"] for d in ser],
+        "sentiment": {"pos": [d["pos"] for d in ser], "neg": [d["neg"] for d in ser],
+                      "neu": [d["neu"] for d in ser]},
+        "mention": [d["mention"] for d in ser],
+        "bhi_trend": analytics.bhi_trend(store, entity_id),
+        "aspects": [{"aspect": a["aspect"], "neg_ratio": round(a["neg_ratio"], 3), "n": a["n"]} for a in ab],
+        "topics": [{"topic": t, "count": c} for t, c in m["top_topics"]],
+        "bhi": bh.get("bhi"), "label": bh.get("label"),
+        "platform": [{"platform": p, "total": v["total"], "neg": v["neg"]}
+                     for p, v in m["by_platform"].items()],
+    }
+    if watch and any(e.get("type") == "competitor" for e in watch.get("entities", [])):
+        data["sov"] = [{"name": r["name"], "mentions": r["mentions"], "type": r["type"]}
+                       for r in sov_fn(store, watch)]
+    return data
+
+
+def _self_entities(watch: dict) -> list[tuple[str, str]]:
+    return [(e["id"], (e.get("aliases") or [e["id"]])[0])
+            for e in watch.get("entities", []) if e.get("type", "self") == "self"]
+
+
+def render_dash(store: Store, entity_id: str, watch: dict | None = None) -> str:
+    """中层战情室：Chart.js 渲染 情绪趋势/声量/方面雷达/话题/SOV。数据走 /chart-data 端点。"""
+    from . import load_watch
+    if watch is None:
+        try:
+            watch = load_watch()
+        except SystemExit:
+            watch = {"platforms": [], "entities": []}
+    selfs = _self_entities(watch)
+    if not entity_id and selfs:
+        entity_id = selfs[0][0]
+    tabs = " ".join(f"<a href='/dash?entity={html.escape(eid)}'>"
+                    f"{'<b>' if eid == entity_id else ''}{html.escape(nm)}{'</b>' if eid == entity_id else ''}</a>"
+                    for eid, nm in selfs)
+    eid_js = json.dumps(entity_id)
+    body = f"""<h1>战情室看板 <a href='/' style='font-size:14px'>← 详情</a> <a href='/exec' style='font-size:14px'>高管概览</a></h1>
+<p>监控对象：{tabs or '(watch.yaml 无自有实体)'}</p>
+<div style='display:grid;grid-template-columns:1fr 1fr;gap:20px'>
+  <div><h2>情绪趋势</h2><canvas id=c_sent height=180></canvas></div>
+  <div><h2>声量当量趋势</h2><canvas id=c_ment height=180></canvas></div>
+  <div><h2>品牌健康指数 BHI 趋势</h2><canvas id=c_bhi height=180></canvas></div>
+  <div><h2>方面口碑（负面占比）</h2><canvas id=c_asp height=180></canvas></div>
+  <div><h2>负面话题分布</h2><canvas id=c_top height=180></canvas></div>
+  <div><h2>竞品声量份额</h2><canvas id=c_sov height=180></canvas></div>
+</div>
+<p class=muted>数据：公开渠道抽样，按发布日聚合。声量当量=跨平台可比声量(平台权重×影响力)。</p>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<script>
+fetch('/chart-data?entity='+encodeURIComponent({eid_js})).then(r=>r.json()).then(d=>{{
+  const mk=(id,cfg)=>{{const el=document.getElementById(id);if(el&&d.days!==undefined)new Chart(el,cfg);}};
+  const NEG='#cf4b2b',POS='#1a7f6b',NEU='#9aa0a6',BLUE='#2f6fd0';
+  mk('c_sent',{{type:'line',data:{{labels:d.days,datasets:[
+    {{label:'正',data:d.sentiment.pos,borderColor:POS,tension:.3}},
+    {{label:'负',data:d.sentiment.neg,borderColor:NEG,tension:.3}},
+    {{label:'中',data:d.sentiment.neu,borderColor:NEU,tension:.3}}]}}}});
+  mk('c_ment',{{type:'line',data:{{labels:d.days,datasets:[{{label:'声量当量',data:d.mention,borderColor:BLUE,fill:true,backgroundColor:'rgba(47,111,208,.1)',tension:.3}}]}}}});
+  mk('c_bhi',{{type:'line',data:{{labels:(d.bhi_trend||[]).map(x=>x.day),datasets:[{{label:'BHI',data:(d.bhi_trend||[]).map(x=>x.bhi),borderColor:'#7048e8',tension:.3}}]}},options:{{scales:{{y:{{min:0,max:100}}}}}}}});
+  if(d.aspects&&d.aspects.length)mk('c_asp',{{type:'radar',data:{{labels:d.aspects.map(a=>a.aspect),datasets:[{{label:'负面占比',data:d.aspects.map(a=>a.neg_ratio),borderColor:NEG,backgroundColor:'rgba(207,75,43,.2)'}}]}},options:{{scales:{{r:{{min:0,max:1}}}}}}}});
+  if(d.topics&&d.topics.length)mk('c_top',{{type:'bar',data:{{labels:d.topics.map(t=>t.topic),datasets:[{{label:'负面条数',data:d.topics.map(t=>t.count),backgroundColor:NEG}}]}}}});
+  if(d.sov&&d.sov.length)mk('c_sov',{{type:'doughnut',data:{{labels:d.sov.map(s=>s.name),datasets:[{{data:d.sov.map(s=>s.mentions),backgroundColor:['#2f6fd0','#cf4b2b','#9a6700','#1a7f6b','#7048e8']}}]}}}});
+}});
+</script>"""
+    return _page("战情室看板", body)
 
 
 def render_exec(store: Store, watch: dict | None = None) -> str:
@@ -304,6 +382,21 @@ def make_handler(db: str):
                     body = render_index(store)
                 elif u.path == "/exec":
                     body = render_exec(store)
+                elif u.path == "/dash":
+                    body = render_dash(store, parse_qs(u.query).get("entity", [""])[0])
+                elif u.path == "/chart-data":
+                    from . import load_watch
+                    try:
+                        w = load_watch()
+                    except SystemExit:
+                        w = None
+                    payload = json.dumps(chart_data(store, parse_qs(u.query).get("entity", [""])[0], w),
+                                         ensure_ascii=False).encode("utf-8")
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Content-Length", str(len(payload)))
+                    self.end_headers()
+                    self.wfile.write(payload); return
                 elif u.path == "/report":
                     body = render_report(store, parse_qs(u.query).get("run_id", [""])[0])
                 else:

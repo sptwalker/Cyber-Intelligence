@@ -122,6 +122,12 @@ def demo() -> None:
     # 高管概览页：BHI 大数字 + 数据健康灯 + 关键结论（用测试 store 的实体 myproduct）
     ex = dashboard.render_exec(store, WATCH)
     assert "高管一屏概览" in ex and "数据健康灯" in ex and "品牌健康指数" in ex and "/100" in ex
+    # 战情室图表页 + JSON 数据端点
+    cd = dashboard.chart_data(store, "myproduct", WATCH)
+    assert "days" in cd and "sentiment" in cd and "bhi_trend" in cd and "aspects" in cd
+    assert isinstance(cd["mention"], list)
+    dh = dashboard.render_dash(store, "myproduct", WATCH)
+    assert "战情室看板" in dh and "chart.js" in dh.lower() and "/chart-data" in dh and "c_sent" in dh
     idx2 = dashboard.render_index(store2)
     assert 'class="badge fail"' in idx2 and "采集异常" in idx2      # 断链→红条徽章
 
