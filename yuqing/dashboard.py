@@ -188,6 +188,8 @@ def chart_data(store: Store, entity_id: str, watch: dict | None = None) -> dict:
         "bhi_trend": analytics.bhi_trend(store, entity_id),
         "aspects": [{"aspect": a["aspect"], "neg_ratio": round(a["neg_ratio"], 3), "n": a["n"]} for a in ab],
         "topics": [{"topic": t, "count": c} for t, c in m["top_topics"]],
+        "semantic_topics": [{"size": t["size"], "sample": t["sample"], "platforms": t["platforms"]}
+                            for t in analytics.semantic_topics(store, entity_id)[:8]],
         "bhi": bh.get("bhi"), "label": bh.get("label"),
         "platform": [{"platform": p, "total": v["total"], "neg": v["neg"]}
                      for p, v in m["by_platform"].items()],

@@ -83,6 +83,29 @@ def top_k_similar(query_vec: list[float], candidates: list[tuple], k: int = 8,
     return sorted(scored, key=lambda x: x[1], reverse=True)[:k]
 
 
+def cluster(items: list[tuple], threshold: float = 0.75) -> list[list]:
+    """向量单链聚类（贪心，百/千条级够用）：相似度 ≥ threshold 的归一簇。
+
+    items: [(id, vec), ...] → [[id,...], [id,...]]（每簇一个 id 列表）。
+    O(n²) 两两比较——数据量大再换。用于话题归并/洗稿去重。
+    """
+    reps: list[tuple] = []           # [(代表向量, [成员id])]
+    for cid, vec in items:
+        if not vec:
+            reps.append((vec, [cid]))
+            continue
+        best_i, best_sim = -1, threshold
+        for i, (rvec, _) in enumerate(reps):
+            s = cosine(vec, rvec)
+            if s >= best_sim:
+                best_i, best_sim = i, s
+        if best_i >= 0:
+            reps[best_i][1].append(cid)
+        else:
+            reps.append((vec, [cid]))
+    return [members for _, members in reps]
+
+
 def probe() -> tuple[bool, str]:
     """连通测试（供设置页/CLI）。返回 (是否通, 说明)。"""
     if not available():
@@ -151,6 +174,10 @@ if __name__ == "__main__":
         tk = top_k_similar([1, 0], [("a", [1, 0]), ("b", [0, 1]), ("c", [0.9, 0.1])], k=2)
         assert [x[0] for x in tk] == ["a", "c"] and tk[0][1] > tk[1][1]     # 按相似排序
         assert top_k_similar([1, 0], [("a", [0, 1])], min_sim=0.5) == []    # 阈值过滤
+        # 单链聚类：相近的归一簇，远的分开
+        cl = cluster([("a", [1, 0]), ("b", [0.98, 0.02]), ("c", [0, 1])], threshold=0.9)
+        groups = sorted([sorted(g) for g in cl])
+        assert groups == [["a", "b"], ["c"]], groups                        # a,b 一簇，c 独立
         assert available() in (True, False)
 
         # V1-B/C：存储缓存 + ensure_embeddings（mock embed_texts，不触网）

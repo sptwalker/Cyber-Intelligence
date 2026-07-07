@@ -177,6 +177,44 @@ def rising_topics(store, entity_id: str, split_day: str) -> list[dict]:
     return sorted([x for x in out if x["delta"] > 0], key=lambda x: x["delta"], reverse=True)
 
 
+def semantic_topics(store, entity_id: str, threshold: float = 0.8, min_size: int = 2) -> list[dict]:
+    """负面话题语义归并（激活 embedding）：把"续航差"+"电池不耐用"归一簇，替代字符串精确归并。
+
+    每簇 {size, sample(代表帖摘要), doc_ids, platforms}，按簇大小降序。
+    无 embedding → 降级：按 topic_label 字符串分组（等价旧 rising_topics 的分桶口径）。
+    """
+    negs = [r for r in _rows(store, entity_id) if r.get("polarity") == "neg"]
+    if not negs:
+        return []
+    from . import embed
+    id2row = {r["doc_id"]: r for r in negs}
+    groups: list[list[str]] = []
+    semantic = False
+    if embed.available():
+        items = [(cid, embed.from_blob(b)) for cid, b in store.embeddings_for(entity_id)
+                 if cid in id2row]
+        if items:
+            groups = embed.cluster(items, threshold=threshold)
+            semantic = True
+    if not semantic:                    # 降级：topic_label 字符串分桶
+        bucket: dict[str, list[str]] = defaultdict(list)
+        for r in negs:
+            bucket[r.get("topic_label") or "未分类"].append(r["doc_id"])
+        groups = list(bucket.values())
+    out = []
+    for g in groups:
+        if len(g) < min_size:
+            continue
+        rows = [id2row[c] for c in g if c in id2row]
+        if not rows:
+            continue
+        plats = sorted({r["platform"] for r in rows})
+        out.append({"size": len(rows), "doc_ids": g, "platforms": plats,
+                    "sample": (rows[0].get("summary") or rows[0].get("text") or "")[:44],
+                    "semantic": semantic})
+    return sorted(out, key=lambda x: x["size"], reverse=True)
+
+
 # 品牌健康指数 BHI（均衡型，0-100，越高越健康）。权重可调（config 旋钮）。
 BHI_WEIGHTS = {"sentiment": 0.40, "volume": 0.20, "crisis": 0.30, "aspect": 0.10}
 
@@ -309,25 +347,46 @@ def aspect_platform_cross(store, watch: dict) -> dict:
     return out
 
 
-def suspicious_clusters(store, entity_id: str, min_size: int = 3) -> list[dict]:
-    """异常账号簇（激活 content_cluster）：同一内容簇被多账号发布 → 疑似水军/搬运/控评。
+def _semantic_cluster_map(store, entity_id: str, threshold: float = 0.9) -> dict[str, int] | None:
+    """用 embedding 语义聚类，返回 {doc_id: 簇号}。无 embedding key/无向量 → None（降级精确哈希）。
 
-    content_cluster 已在采集层算好（归一化后哈希）。同簇跨≥min_size个不同作者 = 高度可疑。
+    threshold 高(0.9)：只把语义高度相似的归一簇（洗稿/改写=高相似，正常不同内容=低相似）。
     """
-    clusters: dict[str, dict] = defaultdict(
+    from . import embed
+    if not embed.available():
+        return None
+    items = [(cid, embed.from_blob(b)) for cid, b in store.embeddings_for(entity_id)]
+    if not items:
+        return None
+    mapping: dict[str, int] = {}
+    for i, members in enumerate(embed.cluster(items, threshold=threshold)):
+        for cid in members:
+            mapping[cid] = i
+    return mapping
+
+
+def suspicious_clusters(store, entity_id: str, min_size: int = 3) -> list[dict]:
+    """异常账号簇：同一内容簇被多账号发布 → 疑似水军/搬运/控评。同簇跨≥min_size个不同作者=高度可疑。
+
+    有 embedding → 语义聚类（挡洗稿/改写，"这盒子真好用"和"此盒子很好用"归一簇）；
+    无 embedding → 降级精确哈希 content_cluster（只挡完全复制粘贴，采集层已算好）。接口不变。
+    """
+    sem_map = _semantic_cluster_map(store, entity_id)
+    clusters: dict = defaultdict(
         lambda: {"authors": set(), "docs": [], "sample": "", "platforms": set()})
     for r in _rows(store, entity_id):
-        cc = r.get("content_cluster")
-        if not cc:
+        key = sem_map.get(r["doc_id"]) if sem_map is not None else r.get("content_cluster")
+        if key is None or key == "":
             continue
-        c = clusters[cc]
+        c = clusters[key]
         c["authors"].add((r.get("author") or "").strip() or "?")
         c["docs"].append(r["doc_id"])
         c["platforms"].add(r["platform"])
         if not c["sample"]:
             c["sample"] = (r.get("text") or "")[:44]
-    out = [{"cluster": cc, "n_authors": len(c["authors"]), "n_docs": len(c["docs"]),
-            "platforms": sorted(c["platforms"]), "sample": c["sample"]}
+    out = [{"cluster": str(cc), "n_authors": len(c["authors"]), "n_docs": len(c["docs"]),
+            "platforms": sorted(c["platforms"]), "sample": c["sample"],
+            "semantic": sem_map is not None}
            for cc, c in clusters.items() if len(c["authors"]) >= min_size]
     return sorted(out, key=lambda x: (x["n_authors"], x["n_docs"]), reverse=True)
 
@@ -418,5 +477,36 @@ if __name__ == "__main__":
     assert sus and sus[0]["n_authors"] == 3, sus                # 同簇3个不同账号
     assert suspicious_clusters(ks, "e") == []                    # 正常数据无异常簇
 
+    # V3 语义聚类：mock embedding，"续航差"和"电池不耐用"归一簇；洗稿识别为同簇
+    import os as _os3
+    from . import embed as _emb3
+    _os3.environ["EMBED_API_KEY"] = "x"
+    _vecmap = {"续航": [1.0, 0.0, 0.0], "电池": [0.97, 0.02, 0.0],   # 续航≈电池(语义近)
+               "外观": [0.0, 0.0, 1.0]}
+    def _vec_for(txt):
+        for kw, v in _vecmap.items():
+            if kw in txt:
+                return v
+        return [0.0, 1.0, 0.0]
+    st3 = _S(":memory:")
+    for i, txt in enumerate(["续航差电不耐用", "电池掉得快", "外观丑"]):
+        d = _CD.build(platform="weibo", entity_id="e", native_id=f"t{i}", text=txt, publish_ts="2026-07-01", fetched_at="2026-07-01T00:00:00")
+        st3.add_clean(d); st3.add_feature(d.doc_id, {"polarity": "neg", "topic_label": txt[:4]})
+        st3.set_embedding(d.doc_id, _emb3.to_blob(_vec_for(txt)))
+    st3.commit()
+    stopics = semantic_topics(st3, "e", threshold=0.9, min_size=2)
+    assert stopics and stopics[0]["size"] == 2 and stopics[0]["semantic"], stopics  # 续航+电池归一簇
+    # V3-B 洗稿识别：语义相近的控评被判同簇（精确哈希挡不住）
+    st4 = _S(":memory:")
+    for i, (au, txt) in enumerate([("A", "这盒子真心好用推荐"), ("B", "此盒子确实好用值得推荐"),
+                                   ("C", "该盒子很好用建议入手")]):   # 改写/洗稿，哈希不同但语义近
+        d = _CD.build(platform="weibo", entity_id="e", native_id=f"w{i}", text=txt, author=au, publish_ts="2026-07-01", fetched_at="2026-07-01T00:00:00")
+        st4.add_clean(d); st4.add_feature(d.doc_id, {"polarity": "pos"})
+        st4.set_embedding(d.doc_id, _emb3.to_blob([1.0, 0.02 * i, 0.0]))   # 高度相似
+    st4.commit()
+    sus2 = suspicious_clusters(st4, "e", min_size=3)
+    assert sus2 and sus2[0]["semantic"] and sus2[0]["n_authors"] == 3, sus2  # 洗稿被识别同簇
+    _os3.environ.pop("EMBED_API_KEY")
+
     print(f"OK analytics: z-score+归一+时序 | BHI 好={bh_good['bhi']} 坏={bh_bad['bhi']}"
-          f" | KOL榜/方面趋势/交叉/异常簇 全通")
+          f" | KOL/方面/交叉/异常簇 | V3语义(话题归并+洗稿识别) 全通")
