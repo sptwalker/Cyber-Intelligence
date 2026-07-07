@@ -83,7 +83,7 @@ CREATE TABLE IF NOT EXISTS clean (
     author TEXT, author_followers INTEGER, text TEXT,
     likes INTEGER, comments INTEGER, reposts INTEGER, plays INTEGER,
     publish_ts TEXT, url TEXT, tags TEXT, content_cluster TEXT,
-    is_complaint INTEGER, backend TEXT, fetched_at TEXT,
+    is_complaint INTEGER, backend TEXT, fetched_at TEXT, embedding BLOB,
     UNIQUE(platform, native_id) ON CONFLICT IGNORE
 );
 CREATE TABLE IF NOT EXISTS features (
@@ -120,10 +120,12 @@ class Store:
         if str(path) != ":memory:":
             self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.executescript(_SCHEMA)
-        try:                          # 轻量迁移：旧库补 plays 列（B站/抖音 播放量）
-            self.conn.execute("ALTER TABLE clean ADD COLUMN plays INTEGER DEFAULT 0")
-        except sqlite3.OperationalError:
-            pass                      # 列已存在
+        for col, ddl in [("plays", "ALTER TABLE clean ADD COLUMN plays INTEGER DEFAULT 0"),
+                         ("embedding", "ALTER TABLE clean ADD COLUMN embedding BLOB")]:
+            try:                          # 轻量迁移：旧库补列（plays 播放量 / embedding 语义向量）
+                self.conn.execute(ddl)
+            except sqlite3.OperationalError:
+                pass                      # 列已存在
 
     # --- raw / clean ---
     def add_raw(self, doc: "CleanDoc", payload: dict) -> None:
@@ -152,6 +154,28 @@ class Store:
         return self.conn.execute(
             "SELECT c.* FROM clean c LEFT JOIN features f USING(doc_id) WHERE f.doc_id IS NULL"
         ).fetchall()
+
+    # --- 语义向量（embedding，缓存：同 doc 只算一次）---
+    def clean_missing_embedding(self) -> list[sqlite3.Row]:
+        """有正文但还没算向量的 clean 帖（供批量向量化）。"""
+        return self.conn.execute(
+            "SELECT doc_id, text FROM clean WHERE embedding IS NULL AND text<>''").fetchall()
+
+    def set_embedding(self, doc_id: str, blob: bytes) -> None:
+        self.conn.execute("UPDATE clean SET embedding=? WHERE doc_id=?", (blob, doc_id))
+
+    def get_embedding(self, doc_id: str) -> bytes | None:
+        r = self.conn.execute("SELECT embedding FROM clean WHERE doc_id=?", (doc_id,)).fetchone()
+        return r["embedding"] if r else None
+
+    def embeddings_for(self, entity_id: str | None = None) -> list[tuple]:
+        """[(doc_id, blob), ...] 已算向量的帖，供检索/聚类。entity_id=None 取全部。"""
+        q = "SELECT doc_id, embedding FROM clean WHERE embedding IS NOT NULL"
+        args: tuple = ()
+        if entity_id:
+            q += " AND entity_id=?"
+            args = (entity_id,)
+        return [(r["doc_id"], r["embedding"]) for r in self.conn.execute(q, args)]
 
     # --- features ---
     def add_feature(self, doc_id: str, feat: dict) -> None:
