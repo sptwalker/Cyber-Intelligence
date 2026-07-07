@@ -28,6 +28,17 @@ th{background:#f6f8fa} a{color:#0969da;text-decoration:none} a:hover{text-decora
 _STATE_CN = {"ok": "正常", "suspect": "存疑", "fail": "失败"}
 
 
+def _safe_href(url: str) -> str:
+    """href 双重防护：先限 http(s)/相对(挡 javascript:)，再 html.escape(挡引号闭合属性突破 XSS)。
+
+    抓来的帖子 URL 不可信——只 scheme-check 挡不住 http://x/'><img onerror=...> 这种属性突破。
+    """
+    u = (url or "").strip()
+    if not u.startswith(("http://", "https://", "/")):
+        return "#"
+    return html.escape(u, quote=True)
+
+
 def _badge(state: str) -> str:
     cls = state if state in ("ok", "suspect", "fail") else "muted"
     return f'<span class="badge {cls}">{_STATE_CN.get(state, state)}</span>'
@@ -82,7 +93,7 @@ def render_index(store: Store) -> str:
     neg_rows = "".join(
         f"<tr><td>{i}</td><td>{html.escape(r['platform'])}</td><td>{r['risk']}</td>"
         f"<td>{html.escape((r['text'] or '')[:50])}</td>"
-        f"<td><a href='{html.escape(r['url'] or '#')}' target=_blank rel=noopener>原帖</a> "
+        f"<td><a href='{_safe_href(r['url'])}' target=_blank rel=noopener>原帖</a> "
         f"<span class=muted>{html.escape(r['doc_id'])}</span></td></tr>"
         for i, r in enumerate(conn.execute(
             "SELECT c.platform,c.text,c.url,c.doc_id,f.risk FROM clean c JOIN features f USING(doc_id)"
@@ -91,6 +102,7 @@ def render_index(store: Store) -> str:
 
     body = (
         "<h1>舆情监控看板 <span class=muted>（数据只读）</span> "
+        "<a href='/exec' style='font-size:14px'>📊 高管概览</a> "
         "<a href='/config' style='font-size:14px'>⚙️ 系统配置</a></h1>" + banner + review_line +
         "<h2>采集健康（各平台最近一次）</h2>"
         "<table><tr><th>平台</th><th>状态</th><th>条数</th><th>时间</th><th>备注</th></tr>"
@@ -156,6 +168,59 @@ def md_to_html(md: str) -> str:
             out.append(f"<p>{_inline(st)}</p>")
         i += 1
     return "\n".join(out)
+
+
+def render_exec(store: Store, watch: dict | None = None) -> str:
+    """高管一屏概览：BHI 大数字 · 数据健康灯 · 关键结论 · 最该看的一件事 · 竞品SOV。"""
+    from . import load_watch, analytics
+    from .report import sov as sov_fn, aggregate
+    if watch is None:
+        try:
+            watch = load_watch()
+        except SystemExit:
+            watch = {"platforms": [], "entities": []}
+    ents = watch.get("entities", [])
+    latest: dict[str, str] = {}
+    for r in store.conn.execute("SELECT platform, health FROM run_log ORDER BY ts DESC"):
+        latest.setdefault(r["platform"], r["health"])
+    lamp = ("#cf222e", "危机/采集异常") if any(v == "fail" for v in latest.values()) else \
+           ("#9a6700", "存疑") if any(v != "ok" for v in latest.values()) else ("#1a7f37", "正常")
+    p = [f"<h1>高管一屏概览 <a href='/' style='font-size:14px'>← 详情看板</a></h1>",
+         f"<p>数据健康灯：<b style='color:{lamp[0]}'>● {lamp[1]}</b> "
+         f"<span class=muted>（{'、'.join(f'{k}:{_STATE_CN.get(v, v)}' for k, v in sorted(latest.items())) or '暂无采集'}）</span></p>"]
+    _col = {"健康": "#1a7f37", "关注": "#9a6700", "预警": "#bc4c00", "危机": "#cf222e"}
+    for e in [x for x in ents if x.get("type", "self") == "self"]:
+        name = (e.get("aliases") or [e["id"]])[0]
+        bh = analytics.brand_health(store, e["id"])
+        p.append(f"<h2>{html.escape(name)}</h2>")
+        if bh["bhi"] is None:
+            p.append("<p class=muted>暂无数据</p>")
+            continue
+        c = bh["components"]
+        p.append(f"<div style='display:flex;align-items:center;gap:24px;margin:8px 0'>"
+                 f"<div style='font-size:56px;font-weight:800;color:{_col[bh['label']]};line-height:1'>{bh['bhi']}"
+                 f"<span style='font-size:18px;color:#656d76'> /100</span></div>"
+                 f"<div><b style='color:{_col[bh['label']]};font-size:18px'>{bh['label']}</b><br>"
+                 f"<span class=muted>情绪{c['sentiment']} · 声量{c['volume']} · 危机{c['crisis']} · 方面{c['aspect']}</span></div></div>")
+        m = aggregate(store, e["id"])
+        concl = [f"本期声量 {m['n_total']} 条，负面 {m['n_neg']}（{m['neg_ratio']:.0%}）"]
+        if m["top_topics"]:
+            concl.append(f"最需关注话题：「{m['top_topics'][0][0]}」（{m['top_topics'][0][1]} 条负面）")
+        if bh["crisis_neg"]:
+            concl.append(f"⚠️ 有 {bh['crisis_neg']} 条命中危机词，需人工核实")
+        p.append("<b>关键结论</b><ul>" + "".join(f"<li>{html.escape(x)}</li>" for x in concl) + "</ul>")
+        if m["top_neg"]:
+            t = m["top_neg"][0]
+            p.append(f"<p><b>最该看的一件事：</b>[{html.escape(t['platform'])}] 风险{t['risk']} · "
+                     f"<a href='{_safe_href(t['url'])}' target=_blank rel=noopener>{html.escape((t['summary'] or '')[:44])}</a></p>")
+    if any(x.get("type") == "competitor" for x in ents):
+        rows = sov_fn(store, watch)
+        p.append("<h2>竞品声量对标（SOV）</h2><table><tr><th>对象</th><th>类型</th><th>声量</th><th>份额</th><th>净情绪</th></tr>"
+                 + "".join(f"<tr><td>{html.escape(r['name'])}</td><td>{'自有' if r['type']=='self' else '竞品'}</td>"
+                          f"<td>{r['mentions']}</td><td>{r['sov']:.0%}</td><td>{r['nsr']:+.2f}</td></tr>" for r in rows)
+                 + "</table>")
+    p.append("<p class=muted>BHI=品牌健康指数(0-100,均衡型:情绪/声量/危机/方面)。公开渠道抽样，仅供趋势参考。</p>")
+    return _page("高管一屏概览", "".join(p))
 
 
 def render_report(store: Store, run_id: str) -> str:
@@ -237,6 +302,8 @@ def make_handler(db: str):
             try:
                 if u.path == "/":
                     body = render_index(store)
+                elif u.path == "/exec":
+                    body = render_exec(store)
                 elif u.path == "/report":
                     body = render_report(store, parse_qs(u.query).get("run_id", [""])[0])
                 else:

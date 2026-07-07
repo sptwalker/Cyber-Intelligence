@@ -59,7 +59,7 @@ def sov(store, watch: dict) -> list[dict]:
     out = []
     for ent in watch["entities"]:
         d = per.get(ent["id"], {"n": 0, "pos": 0, "neg": 0})
-        out.append({"id": ent["id"], "name": ent.get("aliases", [ent["id"]])[0],
+        out.append({"id": ent["id"], "name": (ent.get("aliases") or [ent["id"]])[0],
                     "type": ent.get("type", "self"), "mentions": d["n"],
                     "sov": d["n"] / total,
                     "nsr": ((d["pos"] - d["neg"]) / d["n"]) if d["n"] else 0.0})
@@ -119,7 +119,7 @@ def build_report(store, watch: dict, *, run_id: str, now: str,
         if ent.get("type") == "competitor":
             continue  # MVP 只报自有；竞品 SOV 是 Phase 1
         m = aggregate(store, ent["id"])
-        name = ent.get("aliases", [ent["id"]])[0]
+        name = (ent.get("aliases") or [ent["id"]])[0]
         parts.append(f"# {name} 舆情周报（{now[:10]}）\n")
         parts.append(f"> 数据来源：{'、'.join(watch['platforms'])}；样本 {m['n_total']} 条。"
                      f"**公开渠道抽样、非全量，仅反映相对趋势。**\n")

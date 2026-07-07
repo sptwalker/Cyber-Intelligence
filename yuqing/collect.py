@@ -312,8 +312,8 @@ def collect_all(store: Store, watch: dict, *, run_id: str, now: str,
     health_by_platform: dict[str, str] = {}
     for ent in watch["entities"]:
         eid = ent["id"]
-        kw = ent.get("aliases", [ent["id"]])[0]
-        aliases = ent.get("aliases", [])
+        kw = (ent.get("aliases") or [ent["id"]])[0]
+        aliases = ent.get("aliases") or []
         must_not = ent.get("must_not", [])
         for platform in watch["platforms"]:
             fx = (fixtures.get(platform) or {}).get(eid) if fixtures else None

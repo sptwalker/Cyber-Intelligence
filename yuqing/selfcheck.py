@@ -119,6 +119,9 @@ def demo() -> None:
     rep = dashboard.render_report(store, "r1")
     assert "总声量" in rep and "返回" in rep                        # 展示存库报告
     assert "未找到" in dashboard.render_report(store, "nope")       # 缺失 run_id 兜底
+    # 高管概览页：BHI 大数字 + 数据健康灯 + 关键结论（用测试 store 的实体 myproduct）
+    ex = dashboard.render_exec(store, WATCH)
+    assert "高管一屏概览" in ex and "数据健康灯" in ex and "品牌健康指数" in ex and "/100" in ex
     idx2 = dashboard.render_index(store2)
     assert 'class="badge fail"' in idx2 and "采集异常" in idx2      # 断链→红条徽章
 
