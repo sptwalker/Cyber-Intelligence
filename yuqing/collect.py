@@ -34,6 +34,39 @@ OPENCLI_SITE = {"weibo": "weibo", "zhihu": "zhihu", "douyin": "douyin",
 _COMPLAINT_TRIGGERS = ["投诉", "维权", "退款", "退货", "赔偿", "曝光", "避雷", "翻车", "召回", "欺诈"]
 _ISO_TS = re.compile(r"^\d{4}-\d{2}-\d{2}")   # 仅 ISO 日期串可参与水位比较
 
+_SEM_THRESHOLD = 0.55        # 语义相关性默认阈值（保守，宁缺毋滥防串味），可 config 覆盖
+
+
+def _semantic_setup(require: bool, aliases):
+    """语义相关性开关：仅 SEMANTIC_RELEVANCE=1 + 有 embedding key + search 入口 时启用。
+
+    返回 (是否启用, 阈值, 监控对象参考向量)。参考向量=别名短语的 embedding（算一次）。
+    任何不满足/出错 → 关闭(降级到纯词汇)，绝不阻塞采集。
+    """
+    from . import config, embed
+    if not (require and aliases and config.resolve("SEMANTIC_RELEVANCE") in ("1", "true", "True")):
+        return False, 0.0, None
+    if not embed.available():
+        return False, 0.0, None
+    try:
+        thr = float(config.resolve("SEMANTIC_THRESHOLD") or _SEM_THRESHOLD)
+        vec = embed.embed_one("、".join(aliases[:3]))   # 别名短语作监控对象语义锚
+        return (bool(vec), thr, vec)
+    except Exception:
+        return False, 0.0, None
+
+
+def _semantic_sim(sem_on: bool, ent_vec, text: str):
+    """算一条帖子与监控对象的语义相似度；关闭/出错→None（judge 走纯词汇）。"""
+    if not (sem_on and ent_vec and text):
+        return None
+    from . import embed
+    try:
+        v = embed.embed_one(text)
+        return embed.cosine(ent_vec, v) if v else None
+    except Exception:
+        return None
+
 
 def _pick(d: dict, *keys, default=None):
     for k in keys:
@@ -268,6 +301,10 @@ def collect_platform(store: Store, *, run_id: str, entity_id: str, platform: str
     n_valid = 0                                  # 含有效 native_id、可解析的条数
     n_mustnot = 0                                # 命中否定词被过滤
     n_noalias = 0                                # 不含任何别名被过滤
+    n_semantic = 0                               # 语义救回(不含别名但语义相似)
+    # 语义相关性(V2-B,默认关)：SEMANTIC_RELEVANCE=1 且有 embedding key 时，
+    # 对"不含别名"的候选算与监控对象的语义相似度，≥阈值则救回。双刃剑，宁缺毋滥。
+    sem_on, sem_thr, ent_vec = _semantic_setup(require, aliases)
     for it in items:
         doc = normalize(platform, entity_id, it, backend, now)
         if not doc.native_id:
@@ -275,12 +312,19 @@ def collect_platform(store: Store, *, run_id: str, entity_id: str, platform: str
         n_valid += 1
         store.add_raw(doc, it)                   # 全部留原始层审计（含被过滤的）
         v = relevance.judge(doc.text, aliases or [], must_not, require_alias=require)
+        # 仅当"无别名"被拒 且 语义开启时，才对这一条算 embedding 语义救回（省钱：不对已命中/已过审计的算）
+        if not v.relevant and v.reason == "no_alias" and sem_on:
+            sim = _semantic_sim(sem_on, ent_vec, doc.text)
+            v = relevance.judge(doc.text, aliases or [], must_not, require_alias=require,
+                                sem_sim=sim, sem_threshold=sem_thr)
         if not v.relevant:                       # 串味/无关：不进 clean
             if v.reason.startswith("must_not"):
                 n_mustnot += 1
             else:
                 n_noalias += 1
             continue
+        if v.reason.startswith("semantic"):
+            n_semantic += 1
         ts = doc.publish_ts if _ISO_TS.match(doc.publish_ts) else ""
         if watermark and ts and ts < watermark:
             continue                             # 严格早于水位，跳过
@@ -300,6 +344,8 @@ def collect_platform(store: Store, *, run_id: str, entity_id: str, platform: str
     n_offtopic = n_mustnot + n_noalias
     if n_offtopic:
         note = (note + "；" if note else "") + f"过滤 must_not{n_mustnot}/无别名{n_noalias}(共{n_offtopic}/{n_valid})"
+    if n_semantic:
+        note = (note + "；" if note else "") + f"语义救回{n_semantic}(不含别名但语义相关)"
     store.log_run(run_id, platform, entity_id, len(items), status, state, note, now)
     store.commit()
     return inserted, state
@@ -386,5 +432,21 @@ if __name__ == "__main__":
     _n2, _st2 = collect_platform(hs, run_id="r", entity_id="e", platform="heimao", keyword="出海冷门词",
                                  now="2026-07-06T10:00:00+08:00", fixture=[])   # 空但非登录墙
     assert _st2 == "ok", f"黑猫已登录但无投诉应 ok(非fail)，实际 {_st2}"
+
+    # V2-B 语义相关性：默认关=行为不变；开(mock embed)=救回不含别名的相关帖
+    assert _semantic_setup(True, ["Youdoo"])[0] is False       # 无 SEMANTIC_RELEVANCE=默认关
+    import os as _os2
+    from . import config as _cfg, embed as _emb2
+    _os2.environ["SEMANTIC_RELEVANCE"] = "1"; _os2.environ["EMBED_API_KEY"] = "x"
+    _emb2.embed_one = lambda t, **kw: ([1.0, 0.0] if "别名" in t or "Youdoo" in t else
+                                       [0.95, 0.1] if "盒子" in t else [0.0, 1.0])  # 盒子帖语义近
+    sem_store = _S(":memory:")
+    collect_platform(sem_store, run_id="r", entity_id="e", platform="weibo", keyword="Youdoo",
+                     now="2026-07-06T10:00:00+08:00", aliases=["Youdoo", "别名锚"], must_not=[],
+                     fixture=[{"id": "a", "text": "这盒子巨卡发热"},          # 不含别名但语义近→救回
+                              {"id": "b", "text": "今天天气真好"}])            # 无关→过滤
+    kept = [r[0] for r in sem_store.conn.execute("SELECT native_id FROM clean")]
+    assert kept == ["a"], f"语义应救回盒子帖a、滤掉无关b，实际 {kept}"
+    _os2.environ.pop("SEMANTIC_RELEVANCE"); _os2.environ.pop("EMBED_API_KEY")
     print("OK collect: doc_id=", d.doc_id, "| 黑猫解析", len(parsed),
-          "条 | 空/失败区分✓ | url派生id✓ | 映射失败保护✓ | 黑猫登录墙vs真空✓")
+          "条 | 空/失败区分✓ | url派生✓ | 映射保护✓ | 登录墙vs真空✓ | 语义相关性(默认关/开救回)✓")

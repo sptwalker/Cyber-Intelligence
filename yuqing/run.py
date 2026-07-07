@@ -27,6 +27,8 @@ def main(watch_path: str = "watch.yaml", db: str = "yuqing.db") -> int:
     try:
         health_by_platform = collect_all(store, watch, run_id=run_id, now=now)
         n = analyze_pending(store, now=now)
+        from . import embed
+        n_vec = embed.ensure_embeddings(store, now=now)   # 语义向量化(有 embed key 才算,缓存,降级返回0)
         self_ids = {e["id"] for e in watch["entities"] if e.get("type", "self") == "self"}
         alerts = dispatch_alerts(store, now=now, health_by_platform=health_by_platform,
                                  self_entities=self_ids)
@@ -38,7 +40,7 @@ def main(watch_path: str = "watch.yaml", db: str = "yuqing.db") -> int:
             return 2
         # 测试期精简：只推"报告已更新+链接"，正文看 HTML 页；不推老板日报
         pushed = push_report_notice(run_id)
-        print(f"采集健康：{health_by_platform}｜新分析 {n} 条｜实时预警 {len(alerts)} 条｜飞书通知：{pushed}")
+        print(f"采集健康：{health_by_platform}｜新分析 {n} 条｜向量化 {n_vec} 条｜实时预警 {len(alerts)} 条｜飞书通知：{pushed}")
         print(f"报告已存库 run_id={run_id}｜查看：{report_url(run_id)}")
         return 0
     finally:

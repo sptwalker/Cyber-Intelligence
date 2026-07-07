@@ -26,6 +26,8 @@ FIELDS = [
     ("EMBED_BASE_URL", "Embedding Base URL（留空=百炼默认）", False),
     ("EMBED_MODEL", "Embedding 模型（留空=text-embedding-v4）", False),
     ("EMBED_BATCH", "Embedding 每批条数（留空=10，DashScope 部分模型上限）", False),
+    ("SEMANTIC_RELEVANCE", "语义相关性过滤（1=开，召回不含品牌字面的相关帖；默认关，双刃剑）", False),
+    ("SEMANTIC_THRESHOLD", "语义相关性阈值（留空=0.55，越高越严）", False),
     ("DASHBOARD_URL", "报告页地址（飞书通知里的链接，留空=http://127.0.0.1:8000）", False),
     ("YUQING_MAX_CALLS", "每日 LLM 调用上限", False),
     ("YUQING_MAX_TOKENS", "每日 Token 上限", False),

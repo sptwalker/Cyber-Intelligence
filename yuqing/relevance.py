@@ -24,11 +24,16 @@ class Verdict:
 
 
 def judge(text: str, aliases: Optional[list[str]] = None, must_not: Optional[list[str]] = None,
-          *, require_alias: bool = True) -> Verdict:
+          *, require_alias: bool = True, sem_sim: Optional[float] = None,
+          sem_threshold: Optional[float] = None) -> Verdict:
     """判定一条正文是否与监控对象相关。大小写不敏感（覆盖 Youdoo/youdoo/YOUDOO）。
 
     require_alias=False 时只做否定词过滤（适合 user-posts 等已定向来源，不强求正文含品牌名）。
     aliases/must_not 传 None 安全（当空列表处理）。
+
+    语义通道（V2-B，默认关）：传入 sem_sim(该帖与监控对象的语义相似度)+sem_threshold 时，
+    别名子串没命中但语义相似 ≥ 阈值 → 判相关(reason=semantic)，召回不含品牌字面但在议论该产品的帖。
+    must_not 仍是硬排除、优先级最高（语义也救不回同名歧义）。
     """
     t = (text or "").lower()
     for neg in (must_not or []):
@@ -38,6 +43,8 @@ def judge(text: str, aliases: Optional[list[str]] = None, must_not: Optional[lis
     if require_alias:
         hit = any((a or "").strip().lower() in t for a in (aliases or []) if (a or "").strip())
         if not hit:
+            if sem_threshold is not None and sem_sim is not None and sem_sim >= sem_threshold:
+                return Verdict(True, f"semantic:{round(sem_sim, 3)}")   # 语义救回
             return Verdict(False, "no_alias")
     return Verdict(True)
 
@@ -62,4 +69,10 @@ if __name__ == "__main__":
     # 健壮性：aliases=None/空 不崩
     assert judge("任意文本", None).relevant is False and judge("x", []).reason == "no_alias"
     assert judge("任意文本", None, require_alias=False).relevant   # 无别名要求时 None 也安全
-    print("OK relevance: 串味过滤（否定词/别名/大小写/竞品比较保留/定向/None安全）全通")
+    # V2-B 语义通道（默认关）：不含别名但语义相似≥阈值→救回；低于阈值→仍 no_alias；must_not 仍硬排除
+    assert judge("这盒子巨卡发热", aliases, must_not, sem_sim=0.8, sem_threshold=0.7).relevant  # 语义救回
+    assert judge("这盒子巨卡发热", aliases, must_not, sem_sim=0.8, sem_threshold=0.7).reason.startswith("semantic")
+    assert judge("这盒子巨卡", aliases, must_not, sem_sim=0.5, sem_threshold=0.7).reason == "no_alias"  # 低于阈值不救
+    assert not judge("Doo Prime账户", aliases, must_not, sem_sim=0.99, sem_threshold=0.7).relevant  # must_not硬排除,语义救不回
+    assert judge("这盒子巨卡", aliases, must_not).reason == "no_alias"  # 不传语义参数=默认关,行为不变
+    print("OK relevance: 串味过滤(否定词/别名/大小写/竞品比较/定向/None) + 语义通道(救回/阈值/must_not优先/默认关) 全通")

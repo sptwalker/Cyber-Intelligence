@@ -42,8 +42,8 @@ def _like_escape(s: str) -> str:
     return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
-def retrieve(store, query: str, k: int = 8) -> list[dict]:
-    """按 query 里的词做字面子串检索，按风险分排序取 top-k。中文分词从简，靠 Claude 兜推理。"""
+def _retrieve_lexical(store, query: str, k: int = 8) -> list[dict]:
+    """词汇兜底：按 query 里的词做字面子串检索，按风险分排序取 top-k。语义不可用时回退。"""
     q = (query or "").strip()
     # 保留 ≥2 字符的词，或单字非 ASCII（合法中文单字），丢掉英文单字/停用符
     terms = [t for t in ([q] + q.split()) if t and (len(t) >= 2 or not t.isascii())]
@@ -57,6 +57,48 @@ def retrieve(store, query: str, k: int = 8) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def _fetch_by_ids(store, doc_ids: list[str]) -> dict[str, dict]:
+    if not doc_ids:
+        return {}
+    ph = ",".join("?" * len(doc_ids))
+    rows = store.conn.execute(
+        f"SELECT c.doc_id,c.platform,c.text,c.url,f.polarity,f.risk,f.summary "
+        f"FROM clean c JOIN features f USING(doc_id) WHERE c.doc_id IN ({ph})", doc_ids)
+    return {r["doc_id"]: dict(r) for r in rows}
+
+
+SEM_MIN_SIM = 0.35        # 语义检索相似度下限（宁缺毋滥，低于此视为不相关）
+
+
+def retrieve(store, query: str, k: int = 8, *, min_sim: float = SEM_MIN_SIM) -> list[dict]:
+    """语义检索优先（query向量×库内向量余弦），无 key/无向量时回退词汇匹配。
+
+    命中项带 sim 相似度分（可解释）。语义能召回"电池"→只说"续航"的帖；词汇兜底保证不断。
+    """
+    from . import embed
+    q = (query or "").strip()
+    if not q:
+        return []
+    if embed.available():
+        try:
+            qvec = embed.embed_one(q)
+            cands = [(cid, embed.from_blob(b)) for cid, b in store.embeddings_for()]
+            if qvec and cands:
+                top = embed.top_k_similar(qvec, cands, k=k, min_sim=min_sim)
+                if top:
+                    got = _fetch_by_ids(store, [cid for cid, _ in top])
+                    out = []
+                    for cid, sim in top:
+                        if cid in got:
+                            got[cid]["sim"] = round(sim, 3)
+                            out.append(got[cid])
+                    return out
+        except Exception as e:
+            import sys
+            print(f"[语义检索失败，回退词汇] {str(e)[:120]}", file=sys.stderr)
+    return _retrieve_lexical(store, query, k)         # 降级：无 key/无向量/异常
+
+
 def ask(store, question: str, *, use_claude: Optional[bool] = None) -> dict:
     """返回 {answer, sources}。无 API key 时给检索式摘要（可离线测），有则 Claude 带引用作答。"""
     hits = retrieve(store, question)
@@ -68,8 +110,9 @@ def ask(store, question: str, *, use_claude: Optional[bool] = None) -> dict:
     if not use_claude:
         neg = sum(h["polarity"] == "neg" for h in hits)
         top = hits[0]
+        tag = f"（语义相似{top['sim']}）" if "sim" in top else ""      # 语义召回标相似度分
         return {"answer": f"检索到 {len(hits)} 条相关，其中负面 {neg} 条。"
-                          f"最相关：{top['platform']}「{(top['summary'] or top['text'] or '')[:30]}」"
+                          f"最相关：{top['platform']}「{(top['summary'] or top['text'] or '')[:30]}」{tag}"
                           f"[来源:{top['doc_id']}]。", "sources": sources}
     import anthropic
     ctx = json.dumps([{"doc_id": h["doc_id"], "platform": h["platform"],
@@ -127,6 +170,29 @@ def timeline(store, keyword: str) -> list[dict]:
 
 
 if __name__ == "__main__":
+    # V2-A 语义检索：mock embed，验证语义召回(不含关键词的同义帖) + 无 key 回退词汇
+    import os as _os
+    from .store import Store, CleanDoc
+    from . import embed as _emb
+    # 造 3 条：查询"电池"，只有一条说"续航"(语义相关无字面)，一条说"外观"(无关)
+    s = Store(":memory:")
+    vecs = {"续航": [1.0, 0.9, 0.0], "外观": [0.0, 0.1, 1.0], "电池": [1.0, 0.95, 0.0]}
+    for i, kw in enumerate(["续航", "外观"]):
+        d = CleanDoc.build(platform="weibo", entity_id="e", native_id=f"n{i}", text=f"这盒子{kw}一般", fetched_at="t")
+        s.add_clean(d)
+        s.add_feature(d.doc_id, {"polarity": "neg", "risk": 1})
+        s.set_embedding(d.doc_id, _emb.to_blob(vecs[kw]))
+    s.commit()
+    _os.environ["EMBED_API_KEY"] = "x"
+    _emb.embed_one = lambda t, **kw: vecs.get("电池")          # mock 查询向量
+    hits = retrieve(s, "电池", k=3)
+    assert hits and "续航" in hits[0]["text"] and "sim" in hits[0], hits   # 语义召回同义帖+带分
+    assert all("外观" not in h["text"] for h in hits), "无关帖不应召回"
+    _os.environ.pop("EMBED_API_KEY")
+    # 无 key → 回退词汇：查"续航"字面命中
+    lex = retrieve(s, "续航")
+    assert lex and "续航" in lex[0]["text"] and "sim" not in lex[0]        # 词汇兜底无 sim 分
+    print("OK insights: 语义检索(召回同义帖'续航'带相似度分) + 无key回退词汇 全通")
     from .store import Store, CleanDoc
     s = Store(":memory:")
     for i, (txt, ts, plat) in enumerate([
