@@ -105,15 +105,46 @@ def _first_hit(text: str, words: list[str]) -> Optional[str]:
     return None
 
 
-def rule_extract(doc: dict) -> dict:
-    """离线规则 stub。evidence 保证是正文子串。"""
+def rule_extract(doc: dict, keyword_mgr=None) -> dict:
+    """离线规则 stub。evidence 保证是正文子串。
+
+    集成关键词库：检测complaint/selling_point，辅助情感判断。
+    """
     text = doc.get("text", "") or ""
+    entity_id = doc.get("entity_id")
+
+    # 从关键词库获取吐槽点和卖点
+    complaint_words = []
+    selling_point_words = []
+    if keyword_mgr:
+        try:
+            complaints = keyword_mgr.get_complaints(entity_id=entity_id, min_weight=0.6)
+            complaint_words = [kw['word'] for kw in complaints]
+
+            selling_points = keyword_mgr.get_selling_points(entity_id=entity_id, min_weight=0.6)
+            selling_point_words = [kw['word'] for kw in selling_points]
+        except Exception:
+            pass  # 关键词库读取失败，不影响分析
+
+    # 检测关键词库中的complaint
+    kw_complaint = _first_hit(text, complaint_words) if complaint_words else None
+    # 检测关键词库中的selling_point
+    kw_selling = _first_hit(text, selling_point_words) if selling_point_words else None
+
+    # 原有规则检测
     crisis = _first_hit(text, CRISIS_WORDS)
-    neg = crisis or _first_hit(text, NEG_WORDS)
-    pos = _first_hit(text, POS_WORDS)
-    if neg:
-        n_hits = sum(w in text for w in CRISIS_WORDS + NEG_WORDS)
-        return {"polarity": "neg", "intensity": min(0.4 + 0.15 * n_hits, 1.0), "confidence": 0.55,
+    neg = crisis or _first_hit(text, NEG_WORDS) or kw_complaint  # 整合关键词库complaint
+    pos = _first_hit(text, POS_WORDS) or kw_selling  # 整合关键词库selling_point
+
+    # 计算命中数（包含关键词库）
+    n_neg_hits = (sum(w in text for w in CRISIS_WORDS + NEG_WORDS) +
+                  sum(w in text for w in complaint_words))
+    n_pos_hits = (sum(w in text for w in POS_WORDS) +
+                  sum(w in text for w in selling_point_words))
+
+    # 情感判断：优先负面（负面信号更重要）
+    if neg and n_neg_hits > n_pos_hits:
+        return {"polarity": "neg", "intensity": min(0.4 + 0.15 * n_neg_hits, 1.0), "confidence": 0.55,
                 "is_ironic": False, "is_spam": False, "topic_label": "投诉/负面",
                 "summary": text[:40], "evidence": neg,
                 "signals": {"crisis": bool(crisis), "bug": "卡顿" in text or "发热" in text,
@@ -260,10 +291,18 @@ def analyze_pending(store, weights: Optional[Weights] = None, *, use_claude: Opt
             print(f"[{engine} 抽取失败，降级规则] {str(e)[:150]}", file=sys.stderr)
             feats = {}
 
+    # 初始化关键词管理器（用于辅助规则判断）
+    keyword_mgr = None
+    try:
+        from .keywords import KeywordManager
+        keyword_mgr = KeywordManager(store)
+    except Exception:
+        pass  # 关键词库不可用，不影响分析
+
     for r in rows:
-        feat = feats.get(r["doc_id"]) or rule_extract(dict(r))
+        feat = feats.get(r["doc_id"]) or rule_extract(dict(r), keyword_mgr)
         if feat.get("polarity") not in ("pos", "neg", "neu"):   # LLM 残缺兜底：任何非法极性 → 规则
-            feat = rule_extract(dict(r))
+            feat = rule_extract(dict(r), keyword_mgr)
         feat = _validate_evidence(feat, r["text"] or "")
         sig = feat.get("signals") or {}                  # Claude 可能返回 signals: null
         feat["signals"] = sig

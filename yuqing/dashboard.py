@@ -335,6 +335,193 @@ def render_report(store: Store, run_id: str) -> str:
     return _page(run_id, f"<p><a href='/'>← 返回看板</a></p>{md_to_html(row['markdown'])}")
 
 
+def render_keywords(store: Store, query_params: dict) -> str:
+    """关键词库管理页面"""
+    from .keywords import KeywordManager, TAGS
+
+    km = KeywordManager(store)
+
+    # 获取实体列表
+    entities = [row[0] for row in store.conn.execute('SELECT DISTINCT entity_id FROM clean WHERE entity_id IS NOT NULL').fetchall()]
+    current_entity = query_params.get('entity', [entities[0] if entities else None])[0]
+    current_tag = query_params.get('tag', [''])[0]
+
+    # 实体选择器
+    entity_options = ''.join(f"<option value='{e}' {'selected' if e==current_entity else ''}>{e}</option>" for e in entities)
+    entity_select = f"<select id='entitySelect' onchange='location.href=\"/keywords?entity=\"+this.value'>{entity_options}</select>" if entities else "<span class=muted>无实体</span>"
+
+    # 标签筛选
+    tag_filters = "<a href='/keywords?entity={}&tag='>全部</a>".format(current_entity or '')
+    for tag_code, tag_name in TAGS.items():
+        active = ' style="font-weight:bold"' if tag_code == current_tag else ''
+        tag_filters += f" <a href='/keywords?entity={current_entity or ''}&tag={tag_code}'{active}>{tag_name}</a>"
+
+    # 获取关键词列表
+    keywords = km.list(tag=current_tag if current_tag else None, entity_id=current_entity)
+
+    # 关键词表格
+    kw_rows = ""
+    for kw in keywords:
+        tag_label = TAGS.get(kw['tag'], kw['tag'])
+        source_label = '🤖AI' if kw['source'] == 'auto' else '👤人工'
+        note_display = html.escape(kw['note'] or '')[:30] if kw['note'] else '-'
+        kw_rows += f"""<tr>
+            <td>{html.escape(kw['word'])}</td>
+            <td><span class='badge' style='background:#6e7781'>{tag_label}</span></td>
+            <td>{kw['weight']:.2f}</td>
+            <td>{source_label}</td>
+            <td class=muted>{note_display}</td>
+            <td>
+                <button onclick='deleteKeyword("{html.escape(kw['word'])}", "{kw['tag']}", "{current_entity or ""}")'>删除</button>
+            </td>
+        </tr>"""
+
+    if not kw_rows:
+        kw_rows = "<tr><td colspan='6' class=muted>暂无关键词</td></tr>"
+
+    # AI推荐列表
+    suggestions = km.list_suggestions(status='pending', entity_id=current_entity)
+    sug_rows = ""
+    for sug in suggestions[:10]:
+        tag_label = TAGS.get(sug['suggested_tag'], sug['suggested_tag'])
+        reason = html.escape(sug['reason'] or '')[:50]
+        sug_rows += f"""<tr>
+            <td>{html.escape(sug['word'])}</td>
+            <td><span class='badge' style='background:#0969da'>{tag_label}</span></td>
+            <td>{sug['score']:.2f}</td>
+            <td class=muted>{reason}</td>
+            <td>
+                <button onclick='approveSuggestion({sug["id"]})' style='background:#1a7f37;color:white;border:none;padding:4px 8px;border-radius:4px;cursor:pointer'>批准</button>
+                <button onclick='rejectSuggestion({sug["id"]})' style='background:#cf222e;color:white;border:none;padding:4px 8px;border-radius:4px;cursor:pointer'>拒绝</button>
+            </td>
+        </tr>"""
+
+    if not sug_rows:
+        sug_rows = "<tr><td colspan='5' class=muted>暂无推荐</td></tr>"
+
+    # 标签选项
+    tag_options = ''.join(f"<option value='{code}'>{name}</option>" for code, name in TAGS.items())
+
+    body = f"""
+<h1>关键词库管理</h1>
+<p><a href='/'>← 返回看板</a></p>
+
+<div style='margin:20px 0;padding:15px;background:#f6f8fa;border-radius:6px'>
+    <strong>选择实体：</strong> {entity_select}
+    <button onclick='document.getElementById("addForm").style.display="block"' style='margin-left:20px;background:#2da44e;color:white;border:none;padding:6px 12px;border-radius:6px;cursor:pointer'>+ 添加关键词</button>
+</div>
+
+<div id='addForm' style='display:none;margin:20px 0;padding:15px;background:#fff;border:2px solid #0969da;border-radius:6px'>
+    <h3>添加关键词</h3>
+    <form onsubmit='return addKeyword(event)'>
+        <table style='border:none'>
+            <tr><td>词：</td><td><input type='text' id='word' required style='width:200px'></td></tr>
+            <tr><td>标签：</td><td><select id='tag' style='width:200px'>{tag_options}</select></td></tr>
+            <tr><td>权重：</td><td><input type='number' id='weight' value='1.0' min='0' max='1' step='0.1' style='width:200px'></td></tr>
+            <tr><td>备注：</td><td><input type='text' id='note' style='width:200px'></td></tr>
+        </table>
+        <button type='submit' style='background:#2da44e;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer'>添加</button>
+        <button type='button' onclick='document.getElementById("addForm").style.display="none"' style='margin-left:10px;padding:8px 16px'>取消</button>
+    </form>
+</div>
+
+<div style='margin:20px 0'>
+    <strong>标签筛选：</strong> {tag_filters}
+</div>
+
+<h2>关键词列表 ({len(keywords)} 条)</h2>
+<table>
+    <thead><tr><th>词</th><th>标签</th><th>权重</th><th>来源</th><th>备注</th><th>操作</th></tr></thead>
+    <tbody>{kw_rows}</tbody>
+</table>
+
+<h2>AI推荐 ({len(suggestions)} 条待审核)</h2>
+<table>
+    <thead><tr><th>词</th><th>建议标签</th><th>分数</th><th>理由</th><th>操作</th></tr></thead>
+    <tbody>{sug_rows}</tbody>
+</table>
+
+<script>
+const currentEntity = '{current_entity or ''}';
+
+function addKeyword(e) {{
+    e.preventDefault();
+    const data = {{
+        action: 'add',
+        word: document.getElementById('word').value,
+        tag: document.getElementById('tag').value,
+        weight: document.getElementById('weight').value,
+        note: document.getElementById('note').value,
+        entity_id: currentEntity
+    }};
+
+    fetch('/api/keywords', {{
+        method: 'POST',
+        headers: {{'Content-Type': 'application/json'}},
+        body: JSON.stringify(data)
+    }})
+    .then(r => r.json())
+    .then(result => {{
+        if (result.success) {{
+            alert('添加成功');
+            location.reload();
+        }} else {{
+            alert('添加失败: ' + result.message);
+        }}
+    }});
+    return false;
+}}
+
+function deleteKeyword(word, tag, entityId) {{
+    if (!confirm('确认删除 "' + word + '"?')) return;
+
+    const data = new URLSearchParams({{
+        action: 'delete',
+        word: word,
+        tag: tag,
+        entity_id: entityId
+    }});
+
+    fetch('/api/keywords', {{
+        method: 'POST',
+        body: data
+    }})
+    .then(r => r.json())
+    .then(result => {{
+        if (result.success) {{
+            alert('删除成功');
+            location.reload();
+        }} else {{
+            alert('删除失败');
+        }}
+    }});
+}}
+
+function approveSuggestion(id) {{
+    const data = new URLSearchParams({{action: 'approve', id: id}});
+    fetch('/api/keywords', {{method: 'POST', body: data}})
+    .then(r => r.json())
+    .then(result => {{
+        alert(result.message);
+        if (result.success) location.reload();
+    }});
+}}
+
+function rejectSuggestion(id) {{
+    const data = new URLSearchParams({{action: 'reject', id: id}});
+    fetch('/api/keywords', {{method: 'POST', body: data}})
+    .then(r => r.json())
+    .then(result => {{
+        alert(result.message);
+        if (result.success) location.reload();
+    }});
+}}
+</script>
+"""
+
+    return _page("关键词库管理", body)
+
+
 def render_config(*, saved: bool = False, test_msg: str = "") -> str:
     from . import config
     rows = ""
@@ -426,6 +613,25 @@ def make_handler(db: str):
                     self.wfile.write(payload); return
                 elif u.path == "/report":
                     body = render_report(store, parse_qs(u.query).get("run_id", [""])[0])
+                elif u.path == "/keywords":
+                    body = render_keywords(store, parse_qs(u.query))
+                elif u.path == "/api/keywords":
+                    # API: 返回JSON
+                    from .keywords import KeywordManager
+                    km = KeywordManager(store)
+                    tag = parse_qs(u.query).get("tag", [None])[0]
+                    entity_id = parse_qs(u.query).get("entity", [None])[0]
+                    keywords = km.list(tag=tag, entity_id=entity_id)
+                    suggestions = km.list_suggestions(status='pending', entity_id=entity_id)
+                    payload = json.dumps({
+                        'keywords': keywords,
+                        'suggestions': suggestions
+                    }, ensure_ascii=False, default=str).encode("utf-8")
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Content-Length", str(len(payload)))
+                    self.end_headers()
+                    self.wfile.write(payload); return
                 else:
                     self.send_error(404); return
             finally:
@@ -433,15 +639,75 @@ def make_handler(db: str):
             self._send(body)
 
         def do_POST(self):
-            if urlparse(self.path).path != "/config":
-                self.send_error(404); return
-            if not _write_allowed(self):                  # 写接口：仅本机 + 拒绝跨站(防CSRF)
-                self.send_error(403); return
-            from . import config
-            n = int(self.headers.get("Content-Length") or 0)
-            form = {k: v[0] for k, v in parse_qs(self.rfile.read(n).decode("utf-8")).items()}
-            config.save(form)
-            self._send(render_config(saved=True))
+            u = urlparse(self.path)
+            if u.path == "/config":
+                if not _write_allowed(self):
+                    self.send_error(403); return
+                from . import config
+                n = int(self.headers.get("Content-Length") or 0)
+                form = {k: v[0] for k, v in parse_qs(self.rfile.read(n).decode("utf-8")).items()}
+                config.save(form)
+                self._send(render_config(saved=True))
+            elif u.path == "/api/keywords":
+                # 关键词API：添加/删除/审核
+                if not _write_allowed(self):
+                    self.send_error(403); return
+                store = Store(db)
+                try:
+                    from .keywords import KeywordManager
+                    km = KeywordManager(store)
+                    n = int(self.headers.get("Content-Length") or 0)
+                    body_data = self.rfile.read(n).decode("utf-8")
+                    data = json.loads(body_data) if body_data.startswith('{') else parse_qs(body_data)
+
+                    # 处理表单格式
+                    if isinstance(data, dict) and not isinstance(list(data.values())[0], list):
+                        form = data
+                    else:
+                        form = {k: v[0] for k, v in data.items()}
+
+                    action = form.get('action', '')
+                    result = {'success': False, 'message': ''}
+
+                    if action == 'add':
+                        try:
+                            km.add(
+                                word=form['word'],
+                                tag=form['tag'],
+                                entity_id=form.get('entity_id') or None,
+                                weight=float(form.get('weight', 1.0)),
+                                note=form.get('note', '')
+                            )
+                            result = {'success': True, 'message': '添加成功'}
+                        except Exception as e:
+                            result = {'success': False, 'message': str(e)}
+
+                    elif action == 'delete':
+                        success = km.remove(
+                            word=form['word'],
+                            tag=form['tag'],
+                            entity_id=form.get('entity_id') or None
+                        )
+                        result = {'success': success, 'message': '删除成功' if success else '未找到'}
+
+                    elif action == 'approve':
+                        success = km.approve_suggestion(int(form['id']))
+                        result = {'success': success, 'message': '已批准' if success else '失败'}
+
+                    elif action == 'reject':
+                        success = km.reject_suggestion(int(form['id']))
+                        result = {'success': success, 'message': '已拒绝' if success else '失败'}
+
+                    payload = json.dumps(result, ensure_ascii=False).encode("utf-8")
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Content-Length", str(len(payload)))
+                    self.end_headers()
+                    self.wfile.write(payload)
+                finally:
+                    store.close()
+            else:
+                self.send_error(404)
 
         def log_message(self, *a):  # 静音默认日志
             pass

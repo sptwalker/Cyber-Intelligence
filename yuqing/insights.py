@@ -74,29 +74,65 @@ def retrieve(store, query: str, k: int = 8, *, min_sim: float = SEM_MIN_SIM) -> 
     """语义检索优先（query向量×库内向量余弦），无 key/无向量时回退词汇匹配。
 
     命中项带 sim 相似度分（可解释）。语义能召回"电池"→只说"续航"的帖；词汇兜底保证不断。
+    集成关键词库：自动扩展同义词（similar标签），如查"发热"同时检索"烫手"。
     """
     from . import embed
     q = (query or "").strip()
     if not q:
         return []
+
+    # 扩展同义词（从关键词库）
+    expanded_queries = [q]
+    try:
+        from .keywords import KeywordManager
+        km = KeywordManager(store)
+        # 查找query的同义词（similar标签）
+        similar_words = km.get_similar_words(q, entity_id=None)  # entity_id=None表示全局搜索
+        for sw in similar_words:
+            if sw['weight'] >= 0.6:  # 权重阈值：只扩展高相关的同义词
+                expanded_queries.append(sw['word'])
+
+        # 如果query本身在词库中，也查找指向它的同义词
+        # 例如：query="发热"，找到note含"→发热"的词
+        all_similar = km.get_by_tag('similar', entity_id=None)
+        for kw in all_similar:
+            if kw.get('note') and q in kw['note'] and kw['word'] not in expanded_queries:
+                if kw['weight'] >= 0.6:
+                    expanded_queries.append(kw['word'])
+    except Exception:
+        pass  # 关键词库集成失败，不影响检索
+
     if embed.available():
         try:
-            qvec = embed.embed_one(q)
-            cands = [(cid, embed.from_blob(b)) for cid, b in store.embeddings_for()]
-            if qvec and cands:
-                top = embed.top_k_similar(qvec, cands, k=k, min_sim=min_sim)
-                if top:
-                    got = _fetch_by_ids(store, [cid for cid, _ in top])
-                    out = []
-                    for cid, sim in top:
-                        if cid in got:
-                            got[cid]["sim"] = round(sim, 3)
-                            out.append(got[cid])
-                    return out
+            # 对扩展后的查询词都计算向量，取平均（多查询融合）
+            qvecs = []
+            for eq in expanded_queries[:3]:  # 最多扩展3个同义词，避免语义漂移
+                vec = embed.embed_one(eq)
+                if vec:
+                    qvecs.append(vec)
+
+            if qvecs:
+                # 多向量平均融合
+                import numpy as np
+                qvec = np.mean(qvecs, axis=0).tolist() if len(qvecs) > 1 else qvecs[0]
+
+                cands = [(cid, embed.from_blob(b)) for cid, b in store.embeddings_for()]
+                if cands:
+                    top = embed.top_k_similar(qvec, cands, k=k, min_sim=min_sim)
+                    if top:
+                        got = _fetch_by_ids(store, [cid for cid, _ in top])
+                        out = []
+                        for cid, sim in top:
+                            if cid in got:
+                                got[cid]["sim"] = round(sim, 3)
+                                out.append(got[cid])
+                        return out
         except Exception as e:
             import sys
             print(f"[语义检索失败，回退词汇] {str(e)[:120]}", file=sys.stderr)
-    return _retrieve_lexical(store, query, k)         # 降级：无 key/无向量/异常
+
+    # 降级：词汇匹配也用扩展后的查询词（OR组合）
+    return _retrieve_lexical(store, " OR ".join(expanded_queries), k)
 
 
 def ask(store, question: str, *, use_claude: Optional[bool] = None) -> dict:
