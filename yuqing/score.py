@@ -60,6 +60,18 @@ def influence_degraded(row: dict) -> bool:
                     row.get("plays") or 0, row.get("author_followers") or 0))
 
 
+def mention_equiv(row: dict, w: Weights) -> float:
+    """声量当量：一条内容折算成跨平台可比的"声量"= 平台权重 × 影响力(互动/播放/粉丝)。
+
+    解决"简单计数不可比"——B站百万播放一条 ≠ 微博零互动一条。所有帖子(不分极性)都有当量，
+    用于趋势/SOV/主导者判断。复用 _influence（同一套对数压缩+封顶），口径与风险分一致。
+    """
+    base = w.platform.get(row.get("platform"), 1.0)
+    infl = _influence(row.get("likes", 0), row.get("comments", 0), row.get("reposts", 0),
+                      row.get("author_followers", 0), w, plays=row.get("plays", 0))
+    return round(base * infl, 3)
+
+
 if __name__ == "__main__":
     w = Weights()
     big = {"polarity": "neg", "intensity": 0.9, "platform": "weibo", "is_complaint": True,
@@ -83,4 +95,11 @@ if __name__ == "__main__":
     bili_hi = {**bili_lo, "plays": 24_000_000}
     assert not influence_degraded(bili_lo)                       # 有播放量=不降级
     assert risk_score(bili_hi, w) > risk_score(bili_lo, w) > 0   # 播放量拉高影响力
-    print(f"OK score: 大V={rb} 素人={rs} 正面={rp} | B站播放量 低={risk_score(bili_lo,w)} 高={risk_score(bili_hi,w)}")
+    # 声量当量：跨平台可比，高影响力>低影响力，且不分极性（正面也有当量）
+    big_pos = {"platform": "weibo", "likes": 5000, "comments": 800, "reposts": 2000, "author_followers": 3_000_000}
+    small_any = {"platform": "zhihu", "likes": 3, "comments": 1, "reposts": 0, "author_followers": 50}
+    bili_view = {"platform": "bilibili", "likes": 0, "comments": 0, "reposts": 0, "author_followers": 0, "plays": 24_000_000}
+    assert mention_equiv(big_pos, w) > mention_equiv(small_any, w) > 0     # 大V > 素人
+    assert mention_equiv(bili_view, w) > mention_equiv(small_any, w)      # 百万播放 > 零互动素人
+    print(f"OK score: 大V={rb} 素人={rs} 正面={rp} | B站播放 低={risk_score(bili_lo,w)} 高={risk_score(bili_hi,w)}"
+          f" | 声量当量 大V={mention_equiv(big_pos,w)} 素人={mention_equiv(small_any,w)}")

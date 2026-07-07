@@ -6,10 +6,63 @@
 
 from __future__ import annotations
 
+import datetime as _dt
 import json
+import re
 from collections import defaultdict
 from statistics import median
 from typing import Optional
+
+_YMD = re.compile(r"(\d{4})\s*[-/.年]\s*(\d{1,2})\s*[-/.月]\s*(\d{1,2})")   # 带4位年，任意分隔
+_MD = re.compile(r"(?<!\d)(\d{1,2})\s*[-/.月]\s*(\d{1,2})(?!\d)")            # 无年，月日(前后非数字防误吞年份)
+_NDAYS = re.compile(r"(\d+)\s*天前")
+
+
+def normalize_day(publish_ts: str, fetched_at: str) -> str:
+    """把各平台杂乱的发布时间归一成 YYYY-MM-DD；归不出则兜底用跑批日(fetched_at)。
+
+    覆盖：带年(2026-04-16 / 2026.7.3 / 2025年12月30日 任意分隔)、无年月日(06-30 / 07月03日,借跑批年
+    并做跨年回退)、相对时间(今天/刚刚/N小时前→跑批日; 昨天/前天/N天前→回退)。覆盖不到→兜底跑批日。
+    """
+    ts = (publish_ts or "").strip()
+    base = (fetched_at or "")[:10]
+    try:
+        ref = _dt.date.fromisoformat(base) if len(base) == 10 else None
+    except ValueError:
+        ref = None
+    if not ts:
+        return base
+    if ref is not None:
+        if any(k in ts for k in ("今天", "刚刚", "小时前", "分钟前", "秒前")):
+            return base
+        if "前天" in ts:
+            return (ref - _dt.timedelta(days=2)).isoformat()
+        if "昨天" in ts:
+            return (ref - _dt.timedelta(days=1)).isoformat()
+        m = _NDAYS.search(ts)
+        if m:
+            return (ref - _dt.timedelta(days=int(m.group(1)))).isoformat()
+    m = _YMD.search(ts)                      # 带 4 位年（任意分隔符）
+    if m:
+        y, mo, d = (int(x) for x in m.groups())
+        try:
+            return _dt.date(y, mo, d).isoformat()
+        except ValueError:
+            return base
+    m = _MD.search(ts)                       # 月-日 无年 → 借跑批年；落到跑批日之后则退一年(跨年帖)
+    if m and ref is not None:
+        mo, d = int(m.group(1)), int(m.group(2))
+        try:
+            day = _dt.date(ref.year, mo, d)
+        except ValueError:
+            return base
+        if day > ref:                        # "12-30"在1月跑批→应是去年，退一年防未来日期污染趋势
+            try:
+                day = _dt.date(ref.year - 1, mo, d)
+            except ValueError:
+                return base
+        return day.isoformat()
+    return base
 
 
 def robust_z(history: list[float], x: float) -> float:
@@ -35,19 +88,41 @@ def _rows(store, entity_id: Optional[str] = None) -> list[dict]:
     return [dict(r) for r in store.joined(entity_id)]
 
 
-def daily_negative_series(store, entity_id: str) -> list[tuple[str, int]]:
-    """按天(取 fetched_at 前10位)统计负面条数，升序。供时序看板/基线。
+def daily_series(store, entity_id: Optional[str] = None, weights=None) -> list[dict]:
+    """时序骨架：按**帖子发布日**聚合，每天 {day,total,pos,neg,neu,neg_ratio,mention,risk}，升序。
 
-    只计有效 ISO 日期；无日期(空 fetched_at)的行跳过——否则 'unknown' 桶会排到
-    最后被误当成"最新一天"，既造假异常又漏掉真正最新日的异常。
+    mention=声量当量之和(跨平台可比,非简单计数)。所有趋势/BHI/异动都建在这上面。
+    按发布日(normalize_day)而非跑批日 → 首次跑批就有多天趋势。
     """
-    by_day: dict[str, int] = defaultdict(int)
+    from .score import Weights, mention_equiv
+    weights = weights or Weights()
+    agg: dict[str, dict] = defaultdict(
+        lambda: {"total": 0, "pos": 0, "neg": 0, "neu": 0, "mention": 0.0, "risk": 0.0})
     for r in _rows(store, entity_id):
-        if r["polarity"] == "neg":
-            day = (r["fetched_at"] or "")[:10]
-            if len(day) == 10 and day[4] == "-":
-                by_day[day] += 1
-    return sorted(by_day.items())
+        day = normalize_day(r.get("publish_ts"), r.get("fetched_at"))
+        if not (len(day) == 10 and day[4] == "-"):
+            continue
+        d = agg[day]
+        d["total"] += 1
+        pol = r.get("polarity")
+        if pol in ("pos", "neg", "neu"):
+            d[pol] += 1
+        d["mention"] += mention_equiv(r, weights)
+        d["risk"] += r.get("risk") or 0.0
+    out = []
+    for day in sorted(agg):
+        d = agg[day]
+        d["day"] = day
+        d["neg_ratio"] = d["neg"] / d["total"] if d["total"] else 0.0
+        d["mention"] = round(d["mention"], 2)
+        d["risk"] = round(d["risk"], 2)
+        out.append(d)
+    return out
+
+
+def daily_negative_series(store, entity_id: str) -> list[tuple[str, int]]:
+    """按**发布日**统计负面条数，升序。供异动基线（放量按真实发布日更准）。"""
+    return [(d["day"], d["neg"]) for d in daily_series(store, entity_id) if d["neg"] > 0]
 
 
 MIN_ANOMALY_COUNT = 5   # 绝对下限护栏：负面数太少不判异常（避免 3→6 的假放量）
@@ -100,4 +175,37 @@ if __name__ == "__main__":
     assert robust_z([1, 2, 1, 2, 1], 10) >= 2.0             # 明显放量
     assert robust_z([1, 1, 1], 5) == 100.0                  # 恒定历史+偏离→强异常(不致盲)
     assert robust_z([], 5) == 0.0
-    print("OK analytics: 稳健z-score 生效")
+
+    # normalize_day：各平台杂乱时间归一到发布日
+    B = "2026-07-07"                                          # 跑批日兜底
+    assert normalize_day("2026-04-16", B) == "2026-04-16"    # 小红书 ISO
+    assert normalize_day("2026-5-30", B) == "2026-05-30"     # 贴吧 无补零
+    assert normalize_day("07月03日 09:59", B) == "2026-07-03"  # 微博 月日借年
+    assert normalize_day("06-30 16:25", B) == "2026-06-30"   # 值得买
+    assert normalize_day("今天09:52", B) == B                 # 相对→跑批日
+    assert normalize_day("3天前", B) == "2026-07-04"          # N天前
+    assert normalize_day("昨天", B) == "2026-07-06"
+    assert normalize_day("", B) == B and normalize_day("乱码格式", B) == B  # 空/未知→兜底
+    # 年处理修复(finder 3项)：带年任意分隔用真年、点分格式、跨年回退防未来日
+    assert normalize_day("2025年12月30日", B) == "2025-12-30"  # 带真年,不借跑批年
+    assert normalize_day("2026.07.03", B) == "2026-07-03"     # 点分格式,不被 _MD 误吞年
+    assert normalize_day("2026/7/3", B) == "2026-07-03"
+    assert normalize_day("12-30 08:00", "2026-01-02T00:00:00") == "2025-12-30"  # 跨年退一年,非未来日
+    assert normalize_day("06-30", B) == "2026-06-30"          # 无年月日仍借跑批年(不越过跑批日)
+
+    # daily_series：按发布日聚合 情绪/声量当量/风险
+    from .store import Store, CleanDoc
+    s = Store(":memory:")
+    for i, (day, pol, plays) in enumerate([("2026-07-01", "neg", 0), ("2026-07-01", "pos", 0),
+                                            ("2026-07-03", "neg", 1_000_000)]):
+        d = CleanDoc.build(platform="bilibili", entity_id="e", native_id=f"n{i}",
+                           text="x", publish_ts=day, plays=plays, fetched_at="2026-07-07T00:00:00")
+        s.add_clean(d)
+        s.add_feature(d.doc_id, {"polarity": pol, "risk": 5.0 if pol == "neg" else 0.0})
+    s.commit()
+    ser = daily_series(s, "e")
+    assert [x["day"] for x in ser] == ["2026-07-01", "2026-07-03"]        # 按发布日分桶
+    assert ser[0]["total"] == 2 and ser[0]["neg"] == 1 and ser[0]["pos"] == 1
+    assert ser[1]["mention"] > ser[0]["mention"]                          # 百万播放→声量当量更高
+    assert daily_negative_series(s, "e") == [("2026-07-01", 1), ("2026-07-03", 1)]
+    print("OK analytics: 稳健z-score + 发布日归一 + 时序聚合(声量当量) 生效")
