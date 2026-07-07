@@ -236,6 +236,102 @@ def bhi_trend(store, entity_id: str, weights=None, bhi_weights=None) -> list[dic
     return out
 
 
+def kol_ranking(store, entity_id: str, limit: int = 15, weights=None) -> list[dict]:
+    """KOL/影响力榜（激活 author_followers）：按声量当量排高影响力发声者，分正负立场。
+
+    同一作者多帖合并：声量当量求和、极性取多数。给运营看"谁在放大口碑/谁在带节奏"。
+    """
+    from .score import Weights, mention_equiv
+    weights = weights or Weights()
+    agg: dict[str, dict] = defaultdict(
+        lambda: {"author": "", "followers": 0, "posts": 0, "pos": 0, "neg": 0,
+                 "mention": 0.0, "platform": "", "url": "", "sample": ""})
+    for r in _rows(store, entity_id):
+        au = (r.get("author") or "").strip()
+        if not au:
+            continue
+        k = f"{r['platform']}:{au}"
+        d = agg[k]
+        d["author"] = au
+        d["platform"] = r["platform"]
+        d["followers"] = max(d["followers"], r.get("author_followers") or 0)
+        d["posts"] += 1
+        if r.get("polarity") == "pos":
+            d["pos"] += 1
+        elif r.get("polarity") == "neg":
+            d["neg"] += 1
+        d["mention"] += mention_equiv(r, weights)
+        if not d["url"]:
+            d["url"], d["sample"] = r.get("url") or "", (r.get("summary") or r.get("text") or "")[:40]
+    out = []
+    for d in agg.values():
+        d["mention"] = round(d["mention"], 2)
+        d["stance"] = "负面" if d["neg"] > d["pos"] else "正面" if d["pos"] > d["neg"] else "中性"
+        out.append(d)
+    return sorted(out, key=lambda x: x["mention"], reverse=True)[:limit]
+
+
+def aspect_trend(store, entity_id: str, split_day: str) -> list[dict]:
+    """方面口碑环比：split_day 前后各方面负面占比对比，找恶化最快的方面（产品总监核心）。"""
+    def _breakdown(rows):
+        agg: dict[str, dict] = defaultdict(lambda: {"neg": 0, "n": 0})
+        for r in rows:
+            for a in json.loads(r["signals"] or "{}").get("aspects") or []:
+                asp = a.get("aspect", "其他")
+                agg[asp]["n"] += 1
+                agg[asp]["neg"] += a.get("polarity") == "neg"
+        return {k: (v["neg"] / v["n"] if v["n"] else 0.0) for k, v in agg.items()}
+    rows = _rows(store, entity_id)
+    before = _breakdown([r for r in rows if normalize_day(r.get("publish_ts"), r.get("fetched_at")) < split_day])
+    after = _breakdown([r for r in rows if normalize_day(r.get("publish_ts"), r.get("fetched_at")) >= split_day])
+    out = [{"aspect": a, "before": round(before.get(a, 0.0), 3), "after": round(after.get(a, 0.0), 3),
+            "delta": round(after.get(a, 0.0) - before.get(a, 0.0), 3)}
+           for a in set(before) | set(after)]
+    return sorted(out, key=lambda x: x["delta"], reverse=True)
+
+
+def aspect_platform_cross(store, watch: dict) -> dict:
+    """方面×平台×实体(自有/竞品) 交叉：每个方面在各平台/各实体的负面占比。竞品方面级对标。"""
+    out: dict = {"aspects": set(), "cells": {}}
+    for ent in watch.get("entities", []):
+        eid = ent["id"]
+        agg: dict[tuple, dict] = defaultdict(lambda: {"neg": 0, "n": 0})
+        for r in _rows(store, eid):
+            for a in json.loads(r["signals"] or "{}").get("aspects") or []:
+                asp = a.get("aspect", "其他")
+                out["aspects"].add(asp)
+                key = (asp, r["platform"])
+                agg[key]["n"] += 1
+                agg[key]["neg"] += a.get("polarity") == "neg"
+        out["cells"][eid] = {f"{asp}|{plat}": round(v["neg"] / v["n"], 3) if v["n"] else 0.0
+                             for (asp, plat), v in agg.items()}
+    out["aspects"] = sorted(out["aspects"])
+    return out
+
+
+def suspicious_clusters(store, entity_id: str, min_size: int = 3) -> list[dict]:
+    """异常账号簇（激活 content_cluster）：同一内容簇被多账号发布 → 疑似水军/搬运/控评。
+
+    content_cluster 已在采集层算好（归一化后哈希）。同簇跨≥min_size个不同作者 = 高度可疑。
+    """
+    clusters: dict[str, dict] = defaultdict(
+        lambda: {"authors": set(), "docs": [], "sample": "", "platforms": set()})
+    for r in _rows(store, entity_id):
+        cc = r.get("content_cluster")
+        if not cc:
+            continue
+        c = clusters[cc]
+        c["authors"].add((r.get("author") or "").strip() or "?")
+        c["docs"].append(r["doc_id"])
+        c["platforms"].add(r["platform"])
+        if not c["sample"]:
+            c["sample"] = (r.get("text") or "")[:44]
+    out = [{"cluster": cc, "n_authors": len(c["authors"]), "n_docs": len(c["docs"]),
+            "platforms": sorted(c["platforms"]), "sample": c["sample"]}
+           for cc, c in clusters.items() if len(c["authors"]) >= min_size]
+    return sorted(out, key=lambda x: (x["n_authors"], x["n_docs"]), reverse=True)
+
+
 if __name__ == "__main__":
     assert robust_z([1, 1, 1, 1], 1) == 0.0                 # 恒定且无偏离
     assert robust_z([1, 2, 1, 2, 1], 10) >= 2.0             # 明显放量
@@ -294,4 +390,33 @@ if __name__ == "__main__":
     assert set(bh_good["components"]) == {"sentiment", "volume", "crisis", "aspect"}
     tr = bhi_trend(hn, "e")
     assert tr and tr[0]["day"] == "2026-07-01" and tr[0]["bhi"] < 50
-    print(f"OK analytics: z-score+归一+时序 | BHI 好={bh_good['bhi']}({bh_good['label']}) 坏={bh_bad['bhi']}({bh_bad['label']})")
+
+    # 3-B KOL榜：高粉大V合并多帖、按声量当量排、立场判定
+    ks = _S(":memory:")
+    for i, (au, fol, pol) in enumerate([("大V", 3_000_000, "neg"), ("大V", 3_000_000, "neg"),
+                                        ("素人", 50, "pos")]):
+        d = _CD.build(platform="weibo", entity_id="e", native_id=f"k{i}", text="发热退款" if pol == "neg" else "好用",
+                      author=au, author_followers=fol, likes=500, publish_ts="2026-07-01", fetched_at="2026-07-01T00:00:00")
+        ks.add_clean(d); ks.add_feature(d.doc_id, {"polarity": pol})
+    kol = kol_ranking(ks, "e")
+    assert kol[0]["author"] == "大V" and kol[0]["posts"] == 2 and kol[0]["stance"] == "负面"
+    assert kol[0]["mention"] > kol[1]["mention"]             # 大V声量当量 > 素人
+
+    # 3-C 方面趋势：服务方面负面占比恶化
+    at = aspect_trend(hn, "e", "2026-07-01")
+    assert any(x["aspect"] == "服务" for x in at)
+    cross = aspect_platform_cross(hn, {"entities": [{"id": "e", "type": "self"}]})
+    assert "服务" in cross["aspects"] and "e" in cross["cells"]
+
+    # 3-D 异常账号簇：同内容跨3作者=疑似水军
+    ss2 = _S(":memory:")
+    for i, au in enumerate(["号A", "号B", "号C"]):
+        d = _CD.build(platform="weibo", entity_id="e", native_id=f"s{i}", text="一模一样的控评文案推荐买",
+                      author=au, publish_ts="2026-07-01", fetched_at="2026-07-01T00:00:00")
+        ss2.add_clean(d); ss2.add_feature(d.doc_id, {"polarity": "pos"})
+    sus = suspicious_clusters(ss2, "e")
+    assert sus and sus[0]["n_authors"] == 3, sus                # 同簇3个不同账号
+    assert suspicious_clusters(ks, "e") == []                    # 正常数据无异常簇
+
+    print(f"OK analytics: z-score+归一+时序 | BHI 好={bh_good['bhi']} 坏={bh_bad['bhi']}"
+          f" | KOL榜/方面趋势/交叉/异常簇 全通")

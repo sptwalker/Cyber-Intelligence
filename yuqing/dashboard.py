@@ -195,6 +195,11 @@ def chart_data(store: Store, entity_id: str, watch: dict | None = None) -> dict:
     if watch and any(e.get("type") == "competitor" for e in watch.get("entities", [])):
         data["sov"] = [{"name": r["name"], "mentions": r["mentions"], "type": r["type"]}
                        for r in sov_fn(store, watch)]
+    data["kol"] = [{"author": k["author"], "platform": k["platform"], "followers": k["followers"],
+                    "posts": k["posts"], "stance": k["stance"], "mention": k["mention"],
+                    "url": k["url"], "sample": k["sample"]}
+                   for k in analytics.kol_ranking(store, entity_id, limit=10)]
+    data["clusters"] = analytics.suspicious_clusters(store, entity_id)
     return data
 
 
@@ -212,12 +217,27 @@ def render_dash(store: Store, entity_id: str, watch: dict | None = None) -> str:
         except SystemExit:
             watch = {"platforms": [], "entities": []}
     selfs = _self_entities(watch)
-    if not entity_id and selfs:
-        entity_id = selfs[0][0]
+    valid_ids = {eid for eid, _ in selfs} | {e["id"] for e in watch.get("entities", [])}
+    if entity_id not in valid_ids:                # entity 来自 query param，只接受已知实体(防反射注入)
+        entity_id = selfs[0][0] if selfs else ""
     tabs = " ".join(f"<a href='/dash?entity={html.escape(eid)}'>"
                     f"{'<b>' if eid == entity_id else ''}{html.escape(nm)}{'</b>' if eid == entity_id else ''}</a>"
                     for eid, nm in selfs)
-    eid_js = json.dumps(entity_id)
+    eid_js = json.dumps(entity_id).replace("</", "<\\/")   # 防 </script> 提前闭合(纵深防御)
+    # KOL 榜 + 异常账号簇（服务端渲染表格，非图表）
+    from . import analytics
+    kols = analytics.kol_ranking(store, entity_id, limit=10)
+    kol_rows = "".join(
+        f"<tr><td>{html.escape(k['author'])}</td><td>{html.escape(k['platform'])}</td>"
+        f"<td>{k['followers'] or '—'}</td><td>{k['posts']}</td>"
+        f"<td>{k['stance']}</td><td>{k['mention']}</td>"
+        f"<td><a href='{_safe_href(k['url'])}' target=_blank rel=noopener>{html.escape(k['sample'])}</a></td></tr>"
+        for k in kols) or "<tr><td colspan=7 class=muted>暂无</td></tr>"
+    clus = analytics.suspicious_clusters(store, entity_id)
+    clus_rows = "".join(
+        f"<tr><td>{c['n_authors']}</td><td>{c['n_docs']}</td><td>{html.escape('、'.join(c['platforms']))}</td>"
+        f"<td>{html.escape(c['sample'])}</td></tr>" for c in clus) or \
+        "<tr><td colspan=4 class=muted>未发现同质化账号簇</td></tr>"
     body = f"""<h1>战情室看板 <a href='/' style='font-size:14px'>← 详情</a> <a href='/exec' style='font-size:14px'>高管概览</a></h1>
 <p>监控对象：{tabs or '(watch.yaml 无自有实体)'}</p>
 <div style='display:grid;grid-template-columns:1fr 1fr;gap:20px'>
@@ -229,6 +249,11 @@ def render_dash(store: Store, entity_id: str, watch: dict | None = None) -> str:
   <div><h2>竞品声量份额</h2><canvas id=c_sov height=180></canvas></div>
 </div>
 <p class=muted>数据：公开渠道抽样，按发布日聚合。声量当量=跨平台可比声量(平台权重×影响力)。</p>
+<h2>KOL / 影响力榜（按声量当量）</h2>
+<table><tr><th>作者</th><th>平台</th><th>粉丝</th><th>发帖</th><th>立场</th><th>声量当量</th><th>代表内容</th></tr>{kol_rows}</table>
+<h2>疑似异常账号簇（同质文案跨多账号）</h2>
+<table><tr><th>账号数</th><th>帖数</th><th>平台</th><th>样例</th></tr>{clus_rows}</table>
+<p class=muted>异常簇=同一内容被多个不同账号发布，疑似水军/搬运/控评，仅作嫌疑提示需人工核实。</p>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <script>
 fetch('/chart-data?entity='+encodeURIComponent({eid_js})).then(r=>r.json()).then(d=>{{

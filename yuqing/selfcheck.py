@@ -125,9 +125,10 @@ def demo() -> None:
     # 战情室图表页 + JSON 数据端点
     cd = dashboard.chart_data(store, "myproduct", WATCH)
     assert "days" in cd and "sentiment" in cd and "bhi_trend" in cd and "aspects" in cd
-    assert isinstance(cd["mention"], list)
+    assert isinstance(cd["mention"], list) and "kol" in cd and "clusters" in cd
     dh = dashboard.render_dash(store, "myproduct", WATCH)
     assert "战情室看板" in dh and "chart.js" in dh.lower() and "/chart-data" in dh and "c_sent" in dh
+    assert "KOL / 影响力榜" in dh and "疑似异常账号簇" in dh
     idx2 = dashboard.render_index(store2)
     assert 'class="badge fail"' in idx2 and "采集异常" in idx2      # 断链→红条徽章
 
