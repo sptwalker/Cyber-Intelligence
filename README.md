@@ -19,12 +19,14 @@
 ```bash
 python -m yuqing.selfcheck        # 端到端离线自检（无需登录/API key），exit 0 = 全链通
 python -m yuqing.run              # 跑一次完整流水线：采集→分析→预警→周报→飞书
-python -m yuqing.dashboard        # 只读看板 → 浏览器开 http://127.0.0.1:8000
+python -m yuqing.dashboard        # 看板 → 浏览器开 http://127.0.0.1:8000
+                                  #   / 详情看板 · /exec 高管概览(BHI) · /dash 中层战情室(Chart.js) · /config 配置
 python -m yuqing.cli daily        # 老板一句话日报
 python -m yuqing.cli ask "发热问题在哪些平台"   # AI 舆情问答（RAG-lite）
-python -m yuqing.cli timeline "关键词"          # 跨平台事件时间线
-python -m yuqing.cli backlog out.csv            # 用户诉求→产品需求清单
+python -m yuqing.cli review        # 人工复核队列（数据质量）
 ```
+
+三层视图（一份数据，三张皮肤）：**高管** `/exec` 品牌健康指数 BHI + 危机灯 + 关键结论；**中层** `/dash` Chart.js 战情室（情绪/声量/BHI趋势 + 方面雷达 + KOL榜 + 异常账号簇 + 竞品SOV）；**基层** `/` 详情看板 + 复核队列 + CLI。
 
 监控对象配置在 [`yuqing/watch.yaml`](yuqing/watch.yaml)（实体/别名/否定词/危机词，git 版本化）。
 
