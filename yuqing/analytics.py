@@ -215,6 +215,57 @@ def semantic_topics(store, entity_id: str, threshold: float = 0.8, min_size: int
     return sorted(out, key=lambda x: x["size"], reverse=True)
 
 
+def suggest_targets(store, entity_id: str, aliases: list[str], must_not: list[str] | None = None,
+                    top: int = 10, min_sim: float = 0.5) -> list[dict]:
+    """监控目标语义扩展（激活 embedding）：从已采数据找与监控对象语义高相关、但当前别名未覆盖的
+    高频词/话题簇 → 建议加入监控。人在环路：只出建议，绝不自动改 watch.yaml。
+
+    做法：以别名短语为语义锚，对语义相似≥min_sim 但正文不含任何别名字面（=现有词汇漏掉的）的帖
+    做语义聚类，每簇给代表帖+样例+平均相似度。无 embedding key → 返回 []（此能力纯语义，无降级）。
+    """
+    from . import embed
+    if not embed.available():
+        return []
+    al = [(a or "").strip().lower() for a in (aliases or []) if (a or "").strip()]
+    if not al:                          # 别名全空/空白 → 无有效锚，返回空（否则会拿垃圾向量刷一堆建议）
+        return []
+    mn = [(m or "").strip().lower() for m in (must_not or []) if (m or "").strip()]
+    try:
+        anchor = embed.embed_one("、".join([a for a in aliases if (a or "").strip()][:3]))
+    except Exception:
+        return []
+    if not anchor:
+        return []
+    id2row = {r["doc_id"]: r for r in _rows(store, entity_id)}
+    # 候选：语义相似≥min_sim，但正文不含别名字面（现有词汇过滤会漏的），且不含 must_not
+    cands = []
+    for cid, blob in store.embeddings_for(entity_id):
+        r = id2row.get(cid)
+        if not r:
+            continue
+        t = (r.get("text") or "").lower()
+        if any(a in t for a in al) or any(m in t for m in mn):
+            continue                    # 已被别名覆盖 / 被否定词排除，不算"新发现"
+        sim = embed.cosine(anchor, embed.from_blob(blob))
+        if sim >= min_sim:
+            cands.append((cid, embed.from_blob(blob), sim))
+    if not cands:
+        return []
+    groups = embed.cluster([(c, v) for c, v, _ in cands], threshold=0.8)
+    sims = {c: s for c, _, s in cands}
+    out = []
+    for g in groups:
+        rows = [id2row[c] for c in g if c in id2row]
+        if not rows:
+            continue
+        avg = round(sum(sims.get(c, 0) for c in g) / len(g), 3)
+        out.append({"size": len(rows), "avg_sim": avg,
+                    "sample": (rows[0].get("summary") or rows[0].get("text") or "")[:50],
+                    "platforms": sorted({r["platform"] for r in rows}),
+                    "doc_ids": g})
+    return sorted(out, key=lambda x: (x["size"], x["avg_sim"]), reverse=True)[:top]
+
+
 # 品牌健康指数 BHI（均衡型，0-100，越高越健康）。权重可调（config 旋钮）。
 BHI_WEIGHTS = {"sentiment": 0.40, "volume": 0.20, "crisis": 0.30, "aspect": 0.10}
 
@@ -508,5 +559,23 @@ if __name__ == "__main__":
     assert sus2 and sus2[0]["semantic"] and sus2[0]["n_authors"] == 3, sus2  # 洗稿被识别同簇
     _os3.environ.pop("EMBED_API_KEY")
 
+    # V4 监控目标扩展：语义相关但不含别名的帖 → 建议清单（人工确认）
+    st5 = _S(":memory:")
+    _v = {"盒子": [1.0, 0.0], "机顶盒": [0.96, 0.05], "天气": [0.0, 1.0]}
+    for i, txt in enumerate(["这机顶盒卡", "另一台机顶盒也卡", "今天天气好"]):
+        d = _CD.build(platform="weibo", entity_id="e", native_id=f"g{i}", text=txt, publish_ts="2026-07-01", fetched_at="2026-07-01T00:00:00")
+        st5.add_clean(d); st5.add_feature(d.doc_id, {"polarity": "neg"})
+        st5.set_embedding(d.doc_id, _emb3.to_blob(_v["机顶盒"] if "机顶盒" in txt else _v["天气"]))
+    st5.commit()
+    _os3.environ["EMBED_API_KEY"] = "x"
+    _emb3.embed_one = lambda t, **kw: _v["盒子"]              # 别名锚向量
+    sug = suggest_targets(st5, "e", aliases=["盒子"], min_sim=0.5)
+    assert sug and "机顶盒" in sug[0]["sample"] and sug[0]["size"] == 2, sug  # 建议"机顶盒"簇
+    assert all("天气" not in x["sample"] for x in sug)         # 无关词不建议
+    assert suggest_targets(st5, "e", aliases=[]) == []          # 无别名锚→空
+    assert suggest_targets(st5, "e", aliases=["  ", ""]) == []   # 全空白别名→空(不拿垃圾向量刷建议)
+    _os3.environ.pop("EMBED_API_KEY")
+    assert suggest_targets(st5, "e", aliases=["盒子"]) == []    # 无 key→空(纯语义能力)
+
     print(f"OK analytics: z-score+归一+时序 | BHI 好={bh_good['bhi']} 坏={bh_bad['bhi']}"
-          f" | KOL/方面/交叉/异常簇 | V3语义(话题归并+洗稿识别) 全通")
+          f" | KOL/方面/交叉/异常簇 | V3语义(归并+洗稿) | V4目标扩展 全通")

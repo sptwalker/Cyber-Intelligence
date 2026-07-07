@@ -6,6 +6,7 @@
     python -m yuqing.cli backlog [out.csv]
     python -m yuqing.cli daily
     python -m yuqing.cli review [stats | <doc_id> <结论> [备注]]   # 人工复核队列/标注
+    python -m yuqing.cli suggest                                   # 语义扩展：建议加入监控的新词/话题
 """
 
 from __future__ import annotations
@@ -68,6 +69,23 @@ def main(argv: list[str]) -> int:
                 store.add_review(doc_id, verdict, note,
                                  ts=_dt.datetime.now().astimezone().isoformat(timespec="seconds"))
                 print(f"已记录复核：{doc_id} → {verdict}" + (f"（{note}）" if note else ""))
+        elif cmd == "suggest":                             # 语义扩展：建议加入监控的新词/话题
+            from . import analytics
+            watch = load_watch()
+            any_out = False
+            for ent in watch.get("entities", []):
+                if ent.get("type", "self") != "self":
+                    continue
+                aliases = ent.get("aliases") or [ent["id"]]
+                sug = analytics.suggest_targets(store, ent["id"], aliases, ent.get("must_not"))
+                if not sug:
+                    continue
+                any_out = True
+                print(f"【{aliases[0]}】建议加入监控（语义相关但当前词汇未覆盖，人工确认后写 watch.yaml）：")
+                for x in sug:
+                    print(f"  相似{x['avg_sim']} ×{x['size']} [{'、'.join(x['platforms'])}] {x['sample']}")
+            if not any_out:
+                print("无建议（需配置 EMBED_API_KEY 且有已向量化的相关数据）。")
         else:
             print(__doc__)
             return 1
