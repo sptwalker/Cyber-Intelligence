@@ -101,8 +101,12 @@ class KeywordManager:
         Raises:
             ValueError: tag不合法或词已存在
         """
-        if tag not in TAGS:
-            raise ValueError(f"Invalid tag: {tag}. Must be one of {list(TAGS.keys())}")
+        if tag not in TAGS:                          # 允许自定义标签，仅做基本清洗（内置标签受 analyze/insights 逻辑约束，勿改其码）
+            tag = (tag or '').strip()
+            if not tag:
+                raise ValueError("Tag cannot be empty")
+            if len(tag) > 20:
+                raise ValueError("Tag too long (max 20 chars)")
 
         word = word.strip()
         if not word:

@@ -116,6 +116,8 @@ class Store:
     def __init__(self, path: str | Path = "yuqing.db"):
         self.conn = sqlite3.connect(str(path))
         self.conn.row_factory = sqlite3.Row
+        # 并发写等锁而非立刻报错：看板(多线程/轮询)与跑批同时写 yuqing.db 时防 "database is locked"。
+        self.conn.execute("PRAGMA busy_timeout=15000")
         # WAL：允许"看板/CLI 读"与"跑批写"并发（单写者仍是多用户上限，Phase2 迁 Postgres）
         if str(path) != ":memory:":
             self.conn.execute("PRAGMA journal_mode=WAL")

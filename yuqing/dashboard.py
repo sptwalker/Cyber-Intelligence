@@ -11,10 +11,56 @@ from __future__ import annotations
 import html
 import json
 import re
-from http.server import BaseHTTPRequestHandler, HTTPServer
+import threading
+import io
+import contextlib
+import datetime as _dt
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 from .store import Store
+
+# 跑批触发状态（单机、内存态）。后台线程跑 run.main，主线程照常服务/api/run/status。
+# ponytail: GIL 保护的 dict + 一把锁守住"是否在跑"的读改；单机看板无需任务队列。
+_run_lock = threading.Lock()
+_run_state = {"running": False, "last": None, "current": "", "stop": False}
+#   current: 实时进度文字（"正在采集微博数据…"）；stop: 协作式中止标志
+
+_PLATFORM_CN = {"weibo": "微博", "zhihu": "知乎", "xiaohongshu": "小红书", "douyin": "抖音",
+                "bilibili": "B站", "tieba": "贴吧", "hupu": "虎扑", "smzdm": "值得买",
+                "weixin": "公众号", "heimao": "黑猫投诉"}
+_STAGE_CN = {"_analyze": "正在分析情感/方面…", "_embed": "正在语义向量化…", "_report": "正在生成报告…"}
+
+
+def _progress(entity_id, platform) -> None:
+    if platform in _STAGE_CN:
+        _run_state["current"] = _STAGE_CN[platform]
+    else:
+        _run_state["current"] = f"正在采集{_PLATFORM_CN.get(platform, platform)}数据…"
+
+
+def _do_run(db: str) -> None:
+    buf = io.StringIO()
+    ok, msg = False, ""
+    _run_state["current"] = "正在启动…"
+    try:
+        from .run import main as run_main
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            code = run_main(db=db, on_progress=_progress, should_stop=lambda: _run_state["stop"])
+        stopped = _run_state["stop"]
+        ok = (code == 0) and not stopped
+        out = buf.getvalue().strip()
+        tail = out.splitlines()[-1] if out else f"退出码 {code}"
+        msg = ("已停止（部分数据已入库）｜" + tail) if stopped else tail
+    except SystemExit as e:
+        msg = f"配置/依赖错误：{e}"
+    except Exception as e:
+        msg = f"运行异常：{str(e)[:200]}"
+    finally:
+        _run_state["last"] = {"ok": ok, "msg": msg, "at": _dt.datetime.now().strftime("%H:%M:%S")}
+        _run_state["current"] = ""
+        _run_state["stop"] = False
+        _run_state["running"] = False
 
 _CSS = """
 body{font:14px/1.5 -apple-system,Segoe UI,Microsoft YaHei,sans-serif;max-width:1000px;margin:24px auto;padding:0 16px;color:#1f2328}
@@ -24,6 +70,8 @@ th{background:#f6f8fa} a{color:#0969da;text-decoration:none} a:hover{text-decora
 .badge{padding:1px 8px;border-radius:10px;color:#fff;font-size:12px;white-space:nowrap}
 .ok{background:#1a7f37} .suspect{background:#9a6700} .fail{background:#cf222e}
 .muted{color:#656d76;font-size:12px} pre{white-space:pre-wrap;background:#f6f8fa;padding:12px;border-radius:6px;overflow:auto}
+.spin{display:inline-block;width:14px;height:14px;border:2px solid #d0d7de;border-top-color:#0969da;border-radius:50%;animation:spin .8s linear infinite;vertical-align:-2px;margin-right:6px}
+@keyframes spin{to{transform:rotate(360deg)}}
 """
 
 _STATE_CN = {"ok": "正常", "suspect": "存疑", "fail": "失败"}
@@ -103,6 +151,8 @@ def render_index(store: Store) -> str:
 
     body = (
         "<h1>舆情监控看板 <span class=muted>（数据只读）</span> "
+        "<a href='/login' style='font-size:14px'>🔐 登录与采集</a> "
+        "<a href='/keywords' style='font-size:14px'>📖 关键词库</a> "
         "<a href='/exec' style='font-size:14px'>📊 高管概览</a> "
         "<a href='/dash' style='font-size:14px'>📈 战情室</a> "
         "<a href='/config' style='font-size:14px'>⚙️ 系统配置</a></h1>" + banner + review_line +
@@ -341,20 +391,33 @@ def render_keywords(store: Store, query_params: dict) -> str:
 
     km = KeywordManager(store)
 
-    # 获取实体列表
-    entities = [row[0] for row in store.conn.execute('SELECT DISTINCT entity_id FROM clean WHERE entity_id IS NOT NULL').fetchall()]
-    current_entity = query_params.get('entity', [entities[0] if entities else None])[0]
+    # 实体列表来自监控配置 watch.yaml（词库规划先于采集，故不从 clean 表推断）
+    from . import load_watch
+    try:
+        entities = [(e["id"], (e.get("aliases") or [e["id"]])[0]) for e in load_watch().get("entities", [])]
+    except SystemExit:                                           # 缺 PyYAML/配置时兜底
+        entities = []
+    if not entities:                                             # 配置读不到，退回已采集数据里的实体
+        entities = [(r[0], r[0]) for r in store.conn.execute(
+            'SELECT DISTINCT entity_id FROM clean WHERE entity_id IS NOT NULL').fetchall()]
+    entity_ids = [eid for eid, _ in entities]
+    current_entity = query_params.get('entity', [entity_ids[0] if entity_ids else None])[0]
     current_tag = query_params.get('tag', [''])[0]
 
     # 实体选择器
-    entity_options = ''.join(f"<option value='{e}' {'selected' if e==current_entity else ''}>{e}</option>" for e in entities)
+    entity_options = ''.join(
+        f"<option value='{html.escape(eid)}' {'selected' if eid==current_entity else ''}>{html.escape(label)}</option>"
+        for eid, label in entities)
     entity_select = f"<select id='entitySelect' onchange='location.href=\"/keywords?entity=\"+this.value'>{entity_options}</select>" if entities else "<span class=muted>无实体</span>"
 
-    # 标签筛选
+    # 标签筛选（内置 8 类 + 该实体已用的自定义标签）
+    custom_tags = [r[0] for r in store.conn.execute(
+        'SELECT DISTINCT tag FROM keywords WHERE entity_id IS ? ORDER BY tag', (current_entity,)).fetchall()
+        if r[0] not in TAGS]
     tag_filters = "<a href='/keywords?entity={}&tag='>全部</a>".format(current_entity or '')
-    for tag_code, tag_name in TAGS.items():
+    for tag_code, tag_name in list(TAGS.items()) + [(t, t) for t in custom_tags]:
         active = ' style="font-weight:bold"' if tag_code == current_tag else ''
-        tag_filters += f" <a href='/keywords?entity={current_entity or ''}&tag={tag_code}'{active}>{tag_name}</a>"
+        tag_filters += f" <a href='/keywords?entity={current_entity or ''}&tag={html.escape(tag_code)}'{active}>{html.escape(tag_name)}</a>"
 
     # 获取关键词列表
     keywords = km.list(tag=current_tag if current_tag else None, entity_id=current_entity)
@@ -366,14 +429,12 @@ def render_keywords(store: Store, query_params: dict) -> str:
         source_label = '🤖AI' if kw['source'] == 'auto' else '👤人工'
         note_display = html.escape(kw['note'] or '')[:30] if kw['note'] else '-'
         kw_rows += f"""<tr>
+            <td><input type='checkbox' class='rowchk' data-word="{html.escape(kw['word'])}" data-tag="{kw['tag']}"></td>
             <td>{html.escape(kw['word'])}</td>
             <td><span class='badge' style='background:#6e7781'>{tag_label}</span></td>
             <td>{kw['weight']:.2f}</td>
             <td>{source_label}</td>
             <td class=muted>{note_display}</td>
-            <td>
-                <button onclick='deleteKeyword("{html.escape(kw['word'])}", "{kw['tag']}", "{current_entity or ""}")'>删除</button>
-            </td>
         </tr>"""
 
     if not kw_rows:
@@ -404,11 +465,12 @@ def render_keywords(store: Store, query_params: dict) -> str:
 
     body = f"""
 <h1>关键词库管理</h1>
-<p><a href='/'>← 返回看板</a></p>
+<p><a href='/'>← 返回看板</a> ｜ <a href='/login'>登录与采集</a></p>
 
 <div style='margin:20px 0;padding:15px;background:#f6f8fa;border-radius:6px'>
     <strong>选择实体：</strong> {entity_select}
-    <button onclick='document.getElementById("addForm").style.display="block"' style='margin-left:20px;background:#2da44e;color:white;border:none;padding:6px 12px;border-radius:6px;cursor:pointer'>+ 添加关键词</button>
+    <button onclick='runAnalysis()' id='runBtn' style='margin-left:20px;background:#0969da;color:white;border:none;padding:6px 14px;border-radius:6px;cursor:pointer'>▶ 运行分析</button>
+    <span id='runStatus' class=muted style='margin-left:10px'></span>
 </div>
 
 <div id='addForm' style='display:none;margin:20px 0;padding:15px;background:#fff;border:2px solid #0969da;border-radius:6px'>
@@ -416,7 +478,10 @@ def render_keywords(store: Store, query_params: dict) -> str:
     <form onsubmit='return addKeyword(event)'>
         <table style='border:none'>
             <tr><td>词：</td><td><input type='text' id='word' required style='width:200px'></td></tr>
-            <tr><td>标签：</td><td><select id='tag' style='width:200px'>{tag_options}</select></td></tr>
+            <tr><td>标签：</td><td>
+                <select id='tag' style='width:200px'>{tag_options}</select>
+                <input type='text' id='customTag' maxlength='20' placeholder='或输入自定义标签' style='width:160px;margin-left:8px'>
+            </td></tr>
             <tr><td>权重：</td><td><input type='number' id='weight' value='1.0' min='0' max='1' step='0.1' style='width:200px'></td></tr>
             <tr><td>备注：</td><td><input type='text' id='note' style='width:200px'></td></tr>
         </table>
@@ -429,9 +494,22 @@ def render_keywords(store: Store, query_params: dict) -> str:
     <strong>标签筛选：</strong> {tag_filters}
 </div>
 
-<h2>关键词列表 ({len(keywords)} 条)</h2>
-<table>
-    <thead><tr><th>词</th><th>标签</th><th>权重</th><th>来源</th><th>备注</th><th>操作</th></tr></thead>
+<div style='display:flex;justify-content:space-between;align-items:center;margin:20px 0 8px'>
+    <h2 style='margin:0'>关键词列表 ({len(keywords)} 条)</h2>
+    <div>
+        <button onclick='document.getElementById("addForm").style.display="block"' style='background:#2da44e;color:white;border:none;padding:6px 14px;border-radius:6px;cursor:pointer'>+ 添加</button>
+        <button onclick='deleteSelected()' style='margin-left:8px;background:#cf222e;color:white;border:none;padding:6px 14px;border-radius:6px;cursor:pointer'>🗑 删除选中</button>
+    </div>
+</div>
+<table id='kwTable'>
+    <thead><tr>
+        <th><input type='checkbox' id='chkAll' onclick='toggleAll(this)'></th>
+        <th>词</th>
+        <th onclick='sortTable(2,"text")' style='cursor:pointer;user-select:none'>标签 ⇅</th>
+        <th onclick='sortTable(3,"num")' style='cursor:pointer;user-select:none'>权重 ⇅</th>
+        <th onclick='sortTable(4,"text")' style='cursor:pointer;user-select:none'>来源 ⇅</th>
+        <th>备注</th>
+    </tr></thead>
     <tbody>{kw_rows}</tbody>
 </table>
 
@@ -449,7 +527,7 @@ function addKeyword(e) {{
     const data = {{
         action: 'add',
         word: document.getElementById('word').value,
-        tag: document.getElementById('tag').value,
+        tag: document.getElementById('customTag').value.trim() || document.getElementById('tag').value,
         weight: document.getElementById('weight').value,
         note: document.getElementById('note').value,
         entity_id: currentEntity
@@ -472,29 +550,36 @@ function addKeyword(e) {{
     return false;
 }}
 
-function deleteKeyword(word, tag, entityId) {{
-    if (!confirm('确认删除 "' + word + '"?')) return;
+function toggleAll(cb) {{
+    document.querySelectorAll('.rowchk').forEach(c => c.checked = cb.checked);
+}}
 
-    const data = new URLSearchParams({{
-        action: 'delete',
-        word: word,
-        tag: tag,
-        entity_id: entityId
+function deleteSelected() {{
+    const checks = [...document.querySelectorAll('.rowchk:checked')];
+    if (!checks.length) {{ alert('请先勾选要删除的关键词'); return; }}
+    if (!confirm('确认删除选中的 ' + checks.length + ' 个关键词?')) return;
+    Promise.all(checks.map(c => {{
+        const data = new URLSearchParams({{action: 'delete', word: c.dataset.word, tag: c.dataset.tag, entity_id: currentEntity}});
+        return fetch('/api/keywords', {{method: 'POST', body: data}}).then(r => r.json());
+    }})).then(results => {{
+        const ok = results.filter(r => r.success).length;
+        alert('已删除 ' + ok + '/' + results.length);
+        location.reload();
     }});
+}}
 
-    fetch('/api/keywords', {{
-        method: 'POST',
-        body: data
-    }})
-    .then(r => r.json())
-    .then(result => {{
-        if (result.success) {{
-            alert('删除成功');
-            location.reload();
-        }} else {{
-            alert('删除失败');
-        }}
+let sortDir = {{}};
+function sortTable(col, type) {{
+    const tbody = document.querySelector('#kwTable tbody');
+    const rows = [...tbody.querySelectorAll('tr')].filter(r => r.querySelector('.rowchk'));
+    if (!rows.length) return;
+    const dir = sortDir[col] = -(sortDir[col] || 1);
+    rows.sort((a, b) => {{
+        let x = a.children[col].textContent.trim(), y = b.children[col].textContent.trim();
+        if (type === 'num') return ((parseFloat(x) || 0) - (parseFloat(y) || 0)) * dir;
+        return x.localeCompare(y, 'zh') * dir;
     }});
+    rows.forEach(r => tbody.appendChild(r));
 }}
 
 function approveSuggestion(id) {{
@@ -516,10 +601,123 @@ function rejectSuggestion(id) {{
         if (result.success) location.reload();
     }});
 }}
+
+function setRunBtn(running) {{
+    const btn = document.getElementById('runBtn');
+    if (running) {{ btn.textContent = '⏸ 停止采集'; btn.style.background = '#cf222e'; btn.onclick = stopAnalysis; }}
+    else {{ btn.textContent = '▶ 运行采集'; btn.style.background = '#0969da'; btn.onclick = runAnalysis; }}
+}}
+
+function runAnalysis() {{
+    if (!confirm('确认运行一次网络内容分析？\\n流程：采集→分析→报告。需 opencli 已登录 + API key，可能耗时数分钟。')) return;
+    fetch('/api/run', {{method: 'POST'}}).then(r => r.json()).then(() => pollRun());
+}}
+
+function stopAnalysis() {{
+    if (!confirm('确认停止采集？将在完成当前平台后中止，已采数据保留。')) return;
+    fetch('/api/run/stop', {{method: 'POST'}}).then(r => r.json()).then(d => {{
+        document.getElementById('runStatus').innerHTML = '<span class="spin"></span>' + (d.message || '正在停止…');
+        pollRun();
+    }});
+}}
+
+function pollRun() {{
+    fetch('/api/run/status').then(r => r.json()).then(d => {{
+        const el = document.getElementById('runStatus');
+        setRunBtn(d.running);
+        if (d.running) {{
+            el.innerHTML = '<span class="spin"></span>' + (d.current || '采集运行中…');
+            setTimeout(pollRun, 1500);
+        }} else if (d.last) {{
+            el.textContent = (d.last.ok ? '✅ ' : '⚠️ ') + d.last.msg + ' (' + d.last.at + ')';
+        }} else {{ el.textContent = ''; }}
+    }});
+}}
+pollRun();   // 页面加载即同步一次状态（若正在跑则恢复轮询）
 </script>
 """
 
     return _page("关键词库管理", body)
+
+
+def render_login() -> str:
+    """登录与采集页：桥状态 + 各平台登录态（JS 异步拉取）+ 一键开登录页 + 运行采集。"""
+    # 纯静态外壳，行由 /api/login/status 异步填（heimao 走浏览器桥略慢，不阻塞页面）。
+    # ponytail: runAnalysis/pollRun 与关键词页重复 ~15 行；两处调用不值得建共享 JS 资产管线。
+    body = """
+<h1>登录与采集</h1>
+<p><a href='/'>← 返回看板</a> ｜ <a href='/keywords'>关键词库</a></p>
+<p class=muted>采集复用你本机 Chrome 的登录会话。登录需人工扫码/短信（无法全自动），登录后点"运行采集"即可无人值守跑批。</p>
+
+<div id='bridge' class=muted style='margin:12px 0'>检测浏览器桥…</div>
+
+<h2>平台登录状态</h2>
+<table>
+    <thead><tr><th>平台</th><th>登录态</th><th>身份/备注</th><th>操作</th></tr></thead>
+    <tbody id='loginRows'><tr><td colspan='4' class=muted>加载中…</td></tr></tbody>
+</table>
+<p><button onclick='refreshLogin()'>🔄 重新检测</button></p>
+
+<div style='margin-top:24px;padding:15px;background:#f6f8fa;border-radius:6px'>
+    <strong>登录好后：</strong>
+    <button onclick='runAnalysis()' id='runBtn' style='margin-left:12px;background:#0969da;color:white;border:none;padding:6px 14px;border-radius:6px;cursor:pointer'>▶ 运行采集</button>
+    <span id='runStatus' class=muted style='margin-left:10px'></span>
+</div>
+
+<script>
+function badge(ok) {
+    return ok ? '<span style="color:#1a7f37">✅ 已登录</span>' : '<span style="color:#8c8c8c">⬜ 未登录</span>';
+}
+function refreshLogin() {
+    document.getElementById('bridge').textContent = '检测浏览器桥…';
+    document.getElementById('loginRows').innerHTML = '<tr><td colspan="4" class=muted>检测中…（黑猫走浏览器桥略慢）</td></tr>';
+    fetch('/api/login/status').then(r => r.json()).then(d => {
+        document.getElementById('bridge').innerHTML = (d.bridge_ok ? '✅ ' : '❌ ') + d.bridge_msg;
+        document.getElementById('loginRows').innerHTML = d.platforms.map(p => {
+            const extra = p.identity || p.error || (p.method === 'browser' ? '浏览器探测' : '');
+            return '<tr><td>' + p.platform + '</td><td>' + badge(p.logged_in) + '</td>'
+                + '<td class=muted>' + extra + '</td>'
+                + '<td><button onclick="openLogin(\\'' + p.platform + '\\')">打开登录页</button></td></tr>';
+        }).join('') || '<tr><td colspan="4" class=muted>无需登录的平台</td></tr>';
+    }).catch(() => { document.getElementById('bridge').textContent = '❌ 状态查询失败'; });
+}
+function openLogin(p) {
+    fetch('/api/login/open', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({platform: p})})
+    .then(r => r.json()).then(d => alert(d.message));
+}
+function setRunBtn(running) {
+    const btn = document.getElementById('runBtn');
+    if (running) { btn.textContent = '⏸ 停止采集'; btn.style.background = '#cf222e'; btn.onclick = stopAnalysis; }
+    else { btn.textContent = '▶ 运行采集'; btn.style.background = '#0969da'; btn.onclick = runAnalysis; }
+}
+function runAnalysis() {
+    if (!confirm('确认运行一次采集分析？\\n流程：采集→分析→报告，可能耗时数分钟。')) return;
+    fetch('/api/run', {method: 'POST'}).then(r => r.json()).then(() => pollRun());
+}
+function stopAnalysis() {
+    if (!confirm('确认停止采集？将在完成当前平台后中止，已采数据保留。')) return;
+    fetch('/api/run/stop', {method: 'POST'}).then(r => r.json()).then(d => {
+        document.getElementById('runStatus').innerHTML = '<span class="spin"></span>' + (d.message || '正在停止…');
+        pollRun();
+    });
+}
+function pollRun() {
+    fetch('/api/run/status').then(r => r.json()).then(d => {
+        const el = document.getElementById('runStatus');
+        setRunBtn(d.running);
+        if (d.running) {
+            el.innerHTML = '<span class="spin"></span>' + (d.current || '采集运行中…');
+            setTimeout(pollRun, 1500);
+        } else if (d.last) {
+            el.textContent = (d.last.ok ? '✅ ' : '⚠️ ') + d.last.msg + ' (' + d.last.at + ')';
+        } else { el.textContent = ''; }
+    });
+}
+refreshLogin();
+pollRun();
+</script>
+"""
+    return _page("登录与采集", body)
 
 
 def render_config(*, saved: bool = False, test_msg: str = "") -> str:
@@ -590,6 +788,39 @@ def make_handler(db: str):
                 self._send(render_config()); return
             if u.path == "/config/test":
                 self._send(render_config(test_msg=_run_test(parse_qs(u.query).get("p", [""])[0]))); return
+            if u.path == "/v2":
+                # 新版前端（Ant Design + 完整架构）
+                from pathlib import Path
+                html_path = Path(__file__).parent / 'dashboard_v2.html'
+                with open(html_path, 'r', encoding='utf-8') as f:
+                    self._send(f.read())
+                return
+            if u.path == "/api/run/status":
+                payload = json.dumps({"running": _run_state["running"], "last": _run_state["last"],
+                                      "current": _run_state["current"]},
+                                     ensure_ascii=False).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload); return
+            if u.path == "/api/login/status":
+                from . import login, load_watch
+                try:
+                    platforms = load_watch().get("platforms", [])
+                except SystemExit:
+                    platforms = list(login.LOGIN_URLS)
+                ok, msg = login.bridge_ok()
+                payload = json.dumps({"bridge_ok": ok, "bridge_msg": msg,
+                                      "platforms": login.status(platforms)},
+                                     ensure_ascii=False).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload); return
+            if u.path == "/login":
+                self._send(render_login()); return
             store = Store(db)
             try:
                 if u.path == "/":
@@ -648,6 +879,61 @@ def make_handler(db: str):
                 form = {k: v[0] for k, v in parse_qs(self.rfile.read(n).decode("utf-8")).items()}
                 config.save(form)
                 self._send(render_config(saved=True))
+            elif u.path == "/api/run":
+                # 触发一次跑批（collect→analyze→report），后台线程执行，防并发
+                if not _write_allowed(self):
+                    self.send_error(403); return
+                with _run_lock:
+                    if _run_state["running"]:
+                        result = {"running": True, "message": "已有分析在运行"}
+                    else:
+                        _run_state["running"] = True
+                        _run_state["stop"] = False
+                        _run_state["current"] = "正在启动…"
+                        threading.Thread(target=_do_run, args=(db,), daemon=True).start()
+                        result = {"running": True, "message": "已启动"}
+                payload = json.dumps(result, ensure_ascii=False).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+            elif u.path == "/api/run/stop":
+                # 协作式停止：置标志，采集在下个平台边界中止（已采数据保留）
+                if not _write_allowed(self):
+                    self.send_error(403); return
+                if _run_state["running"]:
+                    _run_state["stop"] = True
+                    _run_state["current"] = "正在停止…（完成当前平台后中止）"
+                    result = {"success": True, "message": "已请求停止"}
+                else:
+                    result = {"success": False, "message": "当前无运行中的采集"}
+                payload = json.dumps(result, ensure_ascii=False).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+            elif u.path == "/api/login/open":
+                # 在桥接 Chrome 打开某平台登录页（platform 白名单校验，防注入）
+                if not _write_allowed(self):
+                    self.send_error(403); return
+                from . import login
+                n = int(self.headers.get("Content-Length") or 0)
+                raw = self.rfile.read(n).decode("utf-8")
+                platform = (json.loads(raw).get("platform") if raw.startswith("{")
+                            else parse_qs(raw).get("platform", [""])[0])
+                try:
+                    login.open_login(platform)
+                    result = {"success": True, "message": f"已在浏览器打开 {platform} 登录页，请登录后点重新检测"}
+                except Exception as e:
+                    result = {"success": False, "message": str(e)[:200]}
+                payload = json.dumps(result, ensure_ascii=False).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
             elif u.path == "/api/keywords":
                 # 关键词API：添加/删除/审核
                 if not _write_allowed(self):
@@ -732,7 +1018,9 @@ def _run_test(provider: str) -> str:
 
 def serve(db: str = "yuqing.db", host: str = "127.0.0.1", port: int = 8000) -> None:
     print(f"看板已启动（只读）：http://{host}:{port}  （Ctrl+C 停止）")
-    HTTPServer((host, port), make_handler(db)).serve_forever()
+    # ThreadingHTTPServer: 每请求独立线程，慢接口（heimao 浏览器探测/跑批）不阻塞整站。
+    # 每请求自建/关 SQLite 连接（见 do_GET），不跨线程共享，故线程安全。
+    ThreadingHTTPServer((host, port), make_handler(db)).serve_forever()
 
 
 if __name__ == "__main__":

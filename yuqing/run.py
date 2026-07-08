@@ -19,19 +19,27 @@ from .report import build_report, push_report_notice, report_url, validate_citat
 from .store import Store
 
 
-def main(watch_path: str = "watch.yaml", db: str = "yuqing.db") -> int:
+def main(watch_path: str = "watch.yaml", db: str = "yuqing.db",
+         on_progress=None, should_stop=None) -> int:
     watch = load_watch(watch_path)
     now = _dt.datetime.now().astimezone().isoformat(timespec="seconds")
     run_id = "run-" + now
     store = Store(db)
     try:
-        health_by_platform = collect_all(store, watch, run_id=run_id, now=now)
+        health_by_platform = collect_all(store, watch, run_id=run_id, now=now,
+                                          on_progress=on_progress, should_stop=should_stop)
+        if on_progress:
+            on_progress(None, "_analyze")
         n = analyze_pending(store, now=now)
         from . import embed
+        if on_progress:
+            on_progress(None, "_embed")
         n_vec = embed.ensure_embeddings(store, now=now)   # 语义向量化(有 embed key 才算,缓存,降级返回0)
         self_ids = {e["id"] for e in watch["entities"] if e.get("type", "self") == "self"}
         alerts = dispatch_alerts(store, now=now, health_by_platform=health_by_platform,
                                  self_entities=self_ids)
+        if on_progress:
+            on_progress(None, "_report")
         md = build_report(store, watch, run_id=run_id, now=now,
                           health_by_platform=health_by_platform)
         bad = validate_citations(md, store)

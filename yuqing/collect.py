@@ -352,8 +352,13 @@ def collect_platform(store: Store, *, run_id: str, entity_id: str, platform: str
 
 
 def collect_all(store: Store, watch: dict, *, run_id: str, now: str,
-                fixtures: Optional[dict] = None) -> dict[str, str]:
-    """按 watch 配置采集所有实体×平台。返回 {platform: 健康态}（用于报告红条）。"""
+                fixtures: Optional[dict] = None,
+                on_progress=None, should_stop=None) -> dict[str, str]:
+    """按 watch 配置采集所有实体×平台。返回 {platform: 健康态}（用于报告红条）。
+
+    on_progress(entity_id, platform): 每平台开采前回调（供 UI 显示"正在采集X…"）。
+    should_stop() -> bool: 每平台前检查，返回 True 则协作式中止（已采数据保留）。
+    """
     fixtures = fixtures or {}
     health_by_platform: dict[str, str] = {}
     for ent in watch["entities"]:
@@ -362,12 +367,18 @@ def collect_all(store: Store, watch: dict, *, run_id: str, now: str,
         aliases = ent.get("aliases") or []
         must_not = ent.get("must_not", [])
         for platform in watch["platforms"]:
+            if should_stop and should_stop():
+                return health_by_platform          # 协作式中止：停在平台边界，已采的保留
+            if on_progress:
+                on_progress(eid, platform)
             fx = (fixtures.get(platform) or {}).get(eid) if fixtures else None
             _, state = collect_platform(store, run_id=run_id, entity_id=eid, platform=platform,
                                         keyword=kw, now=now, fixture=fx,
                                         aliases=aliases, must_not=must_not)
             # 一个平台多实体时取最差态
             health_by_platform[platform] = health.worst(health_by_platform.get(platform), state)
+        if should_stop and should_stop():
+            return health_by_platform
         # user-posts 入口：跟踪指定 KOL/官号（track_users: ["weibo:12345", ...]）
         for spec in ent.get("track_users", []):
             site, _, uid = spec.partition(":")
