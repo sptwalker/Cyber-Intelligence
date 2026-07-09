@@ -118,6 +118,27 @@ def render_index(store: Store) -> str:
     pending = store.pending_review_count()
     review_line = (f"<p class=muted>📋 待人工复核 <b>{pending}</b> 条"
                    f"（<code>python -m yuqing.cli review</code>）</p>" if pending else "")
+    annotated = store.annotated_count()
+    annotate_line = (f"<p class=muted>📝 已标注 <b>{annotated}</b> 条 · "
+                     f"<a href='/annotate'>去标注</a></p>")
+    # 多维标签分布（Phase C：主体×立场，读 features.signals）
+    from collections import Counter as _Ctr
+    subj_c, stance_c = _Ctr(), _Ctr()
+    for row in conn.execute("SELECT signals FROM features WHERE signals LIKE '%stance%'"):
+        try:
+            sg = json.loads(row["signals"])
+            if sg.get("subject"):
+                subj_c[sg["subject"]] += 1
+            if sg.get("stance"):
+                stance_c[sg["stance"]] += 1
+        except Exception:
+            pass
+    if stance_c:
+        dist = ("<p class=muted>🏷️ 主体：" + " · ".join(f"{k} {v}" for k, v in subj_c.most_common())
+                + "　｜　立场：" + " · ".join(f"{k} {v}" for k, v in stance_c.most_common()) + "</p>")
+    else:
+        dist = "<p class=muted>🏷️ 多维标签：暂无（标注样本后重跑分析生效）</p>"
+    dist_line = annotate_line + dist
 
     # 2) 负面日趋势（按 fetched_at 天，实时算，text bar）
     trend = conn.execute(
@@ -157,7 +178,7 @@ def render_index(store: Store) -> str:
         "<a href='/keywords' style='font-size:14px'>📖 关键词库</a> "
         "<a href='/exec' style='font-size:14px'>📊 高管概览</a> "
         "<a href='/dash' style='font-size:14px'>📈 战情室</a> "
-        "<a href='/config' style='font-size:14px'>⚙️ 系统配置</a></h1>" + banner + review_line +
+        "<a href='/config' style='font-size:14px'>⚙️ 系统配置</a></h1>" + banner + review_line + dist_line +
         "<h2>采集健康（各平台最近一次）</h2>"
         "<table><tr><th>平台</th><th>状态</th><th>条数</th><th>时间</th><th>备注</th></tr>"
         + health_rows + "</table>"

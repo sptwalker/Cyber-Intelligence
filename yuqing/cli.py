@@ -7,6 +7,7 @@
     python -m yuqing.cli daily
     python -m yuqing.cli review [stats | <doc_id> <结论> [备注]]   # 人工复核队列/标注
     python -m yuqing.cli suggest                                   # 语义扩展：建议加入监控的新词/话题
+    python -m yuqing.cli classify eval                             # 多维分类器留出集准确率
 """
 
 from __future__ import annotations
@@ -86,6 +87,17 @@ def main(argv: list[str]) -> int:
                     print(f"  相似{x['avg_sim']} ×{x['size']} [{'、'.join(x['platforms'])}] {x['sample']}")
             if not any_out:
                 print("无建议（需配置 EMBED_API_KEY 且有已向量化的相关数据）。")
+        elif cmd == "classify" and args and args[0] == "eval":   # 多维分类器评估（留出集准确率）
+            from . import classify
+            res = classify.evaluate(store)
+            if res.get("note"):
+                print(f"评估跳过：{res['note']}（留出集 {res['n']} 条）")
+            else:
+                print(f"多维分类评估（留出 {res['n']} 条）：")
+                for dim in ("subject", "stance"):
+                    print(f"  {dim} 准确率 {res[dim]['acc']:.0%}")
+                    for k, v in res[dim]["confusion"].items():
+                        print(f"      {k}: {v}")
         else:
             print(__doc__)
             return 1

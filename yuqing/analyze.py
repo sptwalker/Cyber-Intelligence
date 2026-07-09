@@ -15,7 +15,7 @@ import datetime as _dt
 import sys
 from typing import Optional
 
-from .score import Weights, risk_score, influence_degraded
+from .score import Weights, risk_score, influence_degraded, mention_equiv
 from . import llm
 from . import config
 
@@ -279,6 +279,7 @@ def analyze_pending(store, weights: Optional[Weights] = None, *, use_claude: Opt
     engine = _pick_engine(use_claude)
 
     feats: dict[str, dict] = {}
+    cls: dict[str, dict] = {}
     if engine != "rule":
         from .budget import guard, BudgetExceeded
         day = (now or _dt.datetime.now().astimezone().isoformat())[:10]
@@ -290,6 +291,17 @@ def analyze_pending(store, weights: Optional[Weights] = None, *, use_claude: Opt
         except Exception as e:               # LLM 网络/JSON 失败绝不阻塞跑批，降级规则
             print(f"[{engine} 抽取失败，降级规则] {str(e)[:150]}", file=sys.stderr)
             feats = {}
+        # 多维分类（主体×立场）few-shot：独立 try，与抽取互不影响；无范例则跳过走规则粗判
+        try:
+            from . import classify
+            exemplars = classify.build_exemplars(store, holdout=False)
+            prov = "deepseek" if llm.available("deepseek") else ("minimax" if llm.available("minimax") else None)
+            if exemplars and prov:
+                guard(store, day, add_calls=1, add_tokens=len(docs) * 400)
+                cls = classify.classify_llm(prov, docs, exemplars)
+        except Exception as e:
+            print(f"[分类降级规则] {str(e)[:150]}", file=sys.stderr)
+            cls = {}
 
     # 初始化关键词管理器（用于辅助规则判断）
     keyword_mgr = None
@@ -326,11 +338,22 @@ def analyze_pending(store, weights: Optional[Weights] = None, *, use_claude: Opt
             sig["crisis"] = True
             if feat.get("polarity") == "neu":
                 feat["polarity"] = "neg"
+        # 多维标签（主体×立场）：LLM 分类缺失→规则粗判；主体走白名单优先
+        from . import classify
+        c = cls.get(r["doc_id"]) or classify.classify_rule(dict(r), feat)
+        c = classify.validate_keywords(c, r["text"] or "")
+        subj_v, subj_c = classify.resolve_subject(store, dict(r), c)
+        sig["subject"], sig["subject_conf"] = subj_v, subj_c
+        sig["stance"] = c["stance"]["value"]
+        sig["stance_conf"] = c["stance"]["confidence"]
+        if c.get("keywords"):
+            sig["stance_keywords"] = c["keywords"]
         # 打风险分：合并 clean 字段 + 抽取结果
         merged = dict(r)
         merged.update(polarity=feat["polarity"], intensity=feat.get("intensity", 0.0),
                       signals=sig, is_complaint=bool(r["is_complaint"]))
         feat["risk"] = risk_score(merged, weights)
+        sig["importance"] = classify.importance_bucket(mention_equiv(merged, weights), feat["risk"])
         if feat["risk"] > 0 and influence_degraded(merged):
             sig["influence_degraded"] = True     # 风险分缺互动数据(如微博搜索)，报告须标注降级
         store.add_feature(r["doc_id"], feat)
@@ -401,5 +424,15 @@ if __name__ == "__main__":
     finally:
         _pkg.load_watch = _orig_lw
 
+    # 多维分类接线（离线走 classify_rule）：features.signals 落 subject/stance/importance；白名单盖主体
+    _st4 = _S(":memory:")
+    _st4.add_account("央视新闻", "媒体", platform="weibo")
+    _st4.add_clean(_CD.build(platform="weibo", entity_id="e", native_id="m1",
+                             text="申请退款客服不理", author="央视新闻"))
+    analyze_pending(_st4, now="2026-07-06T10:00:00+08:00")
+    _s4 = _json.loads(_st4.conn.execute("SELECT signals FROM features").fetchone()[0])
+    assert _s4.get("subject") == "媒体" and _s4.get("subject_conf") == 1.0, "白名单未确定性判主体"
+    assert _s4.get("stance") in ("投诉", "批评") and _s4.get("importance") in ("高", "中", "低"), _s4
+
     print("OK analyze:", neg["polarity"], pos["polarity"], "| ABSA", sorted(aspects),
-          "| 路由分层✓ | 交叉分析✓ | LLM失败降级✓ | crisis_boost✓")
+          "| 路由分层✓ | 交叉分析✓ | LLM失败降级✓ | crisis_boost✓ | 多维分类(白名单/立场/重要性)✓")
