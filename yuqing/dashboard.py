@@ -139,6 +139,10 @@ def render_index(store: Store) -> str:
     else:
         dist = "<p class=muted>🏷️ 多维标签：暂无（标注样本后重跑分析生效）</p>"
     dist_line = annotate_line + dist
+    from . import config as _cfg
+    _m = _cfg.mode()
+    _mode_label = "训练 training" if _m == "training" else "日常 daily"
+    _mode_hint = "跑批不推飞书，适合调参/标注期" if _m == "training" else "跑批推报告到飞书"
 
     # 2) 负面日趋势（按 fetched_at 天，实时算，text bar）
     trend = conn.execute(
@@ -179,6 +183,7 @@ def render_index(store: Store) -> str:
         "<a href='/exec' style='font-size:14px'>📊 高管概览</a> "
         "<a href='/dash' style='font-size:14px'>📈 战情室</a> "
         "<a href='/config' style='font-size:14px'>⚙️ 系统配置</a></h1>" + banner + review_line + dist_line +
+        f"<p class=muted>运行模式：<b>{_mode_label}</b>（{_mode_hint}）</p>" +
         "<h2>采集健康（各平台最近一次）</h2>"
         "<table><tr><th>平台</th><th>状态</th><th>条数</th><th>时间</th><th>备注</th></tr>"
         + health_rows + "</table>"
@@ -921,7 +926,12 @@ def render_config(*, saved: bool = False, test_msg: str = "") -> str:
     from . import config
     rows = ""
     for k, label, secret, display, is_set in config.masked():
-        if secret:
+        if k == "YUQING_MODE":
+            cur = display or "daily"
+            opts = "".join(f"<option value='{m}' {'selected' if m==cur else ''}>{m}</option>"
+                           for m in ("daily", "training"))
+            field = f"<select name={k}>{opts}</select>"
+        elif secret:
             ph = f"已设置 {html.escape(display)}，留空则不改" if is_set else "未设置"
             field = f"<input type=password name={k} placeholder='{ph}' autocomplete=off>"
         else:

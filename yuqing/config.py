@@ -31,8 +31,16 @@ FIELDS = [
     ("DASHBOARD_URL", "报告页地址（飞书通知里的链接，留空=http://127.0.0.1:8000）", False),
     ("YUQING_MAX_CALLS", "每日 LLM 调用上限", False),
     ("YUQING_MAX_TOKENS", "每日 Token 上限", False),
+    ("YUQING_MODE", "运行模式（training=安静迭代不推飞书；daily=推报告到飞书）", False),
 ]
 _SECRET = {k for k, _, s in FIELDS if s}
+MODES = ("training", "daily")
+
+
+def mode() -> str:
+    """运行模式：training（前期训练，跑批不推飞书避免刷屏）/ daily（日常，推报告）。默认 daily。"""
+    v = (resolve("YUQING_MODE") or "").strip().lower()
+    return v if v in MODES else "daily"
 
 
 def _path() -> Path:
@@ -101,5 +109,9 @@ if __name__ == "__main__":
     m = {k: (disp, is_set) for k, _, _, disp, is_set in masked()}
     assert m["DEEPSEEK_API_KEY"][0] == "••••1234" and m["DEEPSEEK_API_KEY"][1]  # 脱敏尾4位
     assert "secret123" not in str(masked())                          # 绝不回显全量密钥
+    # 运行模式：默认 daily；非法值回退 daily；显式 training 生效
+    assert mode() == "daily"
+    save({"YUQING_MODE": "training"}); assert mode() == "training"
+    save({"YUQING_MODE": "乱填"}); assert mode() == "daily"          # 非法回退
     os.remove(os.environ["YUQING_CONFIG"]); os.environ.pop("YUQING_CONFIG"); os.environ.pop("DEEPSEEK_MODEL")
-    print("OK config: 文件优先/env兜底/密钥留空保持/脱敏尾4位/不回显全量 全通")
+    print("OK config: 文件优先/env兜底/密钥留空保持/脱敏尾4位/不回显全量/运行模式 全通")

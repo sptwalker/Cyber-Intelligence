@@ -46,9 +46,11 @@ def main(watch_path: str = "watch.yaml", db: str = "yuqing.db",
         if bad:
             print(f"[!] 引用校验失败，存在不存在的 doc_id：{bad}", file=sys.stderr)
             return 2
-        # 测试期精简：只推"报告已更新+链接"，正文看 HTML 页；不推老板日报
-        pushed = push_report_notice(run_id)
-        print(f"采集健康：{health_by_platform}｜新分析 {n} 条｜向量化 {n_vec} 条｜实时预警 {len(alerts)} 条｜飞书通知：{pushed}")
+        # 运行模式：daily 推"报告已更新+链接"到飞书；training 安静迭代不推（避免调参期刷屏）
+        from . import config
+        _mode = config.mode()
+        pushed = push_report_notice(run_id) if _mode == "daily" else "训练模式跳过"
+        print(f"[{_mode}] 采集健康：{health_by_platform}｜新分析 {n} 条｜向量化 {n_vec} 条｜实时预警 {len(alerts)} 条｜飞书通知：{pushed}")
         print(f"报告已存库 run_id={run_id}｜查看：{report_url(run_id)}")
         return 0
     finally:
