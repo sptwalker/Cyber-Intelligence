@@ -152,6 +152,7 @@ def render_index(store: Store) -> str:
     body = (
         "<h1>舆情监控看板 <span class=muted>（数据只读）</span> "
         "<a href='/login' style='font-size:14px'>🔐 登录与采集</a> "
+        "<a href='/watch' style='font-size:14px'>🎯 监控配置</a> "
         "<a href='/keywords' style='font-size:14px'>📖 关键词库</a> "
         "<a href='/exec' style='font-size:14px'>📊 高管概览</a> "
         "<a href='/dash' style='font-size:14px'>📈 战情室</a> "
@@ -646,7 +647,7 @@ def render_login() -> str:
     # ponytail: runAnalysis/pollRun 与关键词页重复 ~15 行；两处调用不值得建共享 JS 资产管线。
     body = """
 <h1>登录与采集</h1>
-<p><a href='/'>← 返回看板</a> ｜ <a href='/keywords'>关键词库</a></p>
+<p><a href='/'>← 返回看板</a> ｜ <a href='/watch'>监控配置</a> ｜ <a href='/keywords'>关键词库</a></p>
 <p class=muted>采集复用你本机 Chrome 的登录会话。登录需人工扫码/短信（无法全自动），登录后点"运行采集"即可无人值守跑批。</p>
 
 <div id='bridge' class=muted style='margin:12px 0'>检测浏览器桥…</div>
@@ -718,6 +719,75 @@ pollRun();
 </script>
 """
     return _page("登录与采集", body)
+
+
+def _validate_watch(text: str) -> tuple[bool, str]:
+    """校验 watch.yaml 文本：能解析 + 结构合法（platforms 列表 + entities 每个有 id）。返回 (ok, 说明)。"""
+    import yaml
+    try:
+        d = yaml.safe_load(text)
+    except yaml.YAMLError as e:
+        return False, f"YAML 语法错误：{str(e)[:200]}"
+    if not isinstance(d, dict):
+        return False, "顶层必须是映射（含 platforms 和 entities）"
+    if not isinstance(d.get("platforms"), list) or not d["platforms"]:
+        return False, "缺少 platforms 列表（如 [weibo, zhihu, ...]）"
+    ents = d.get("entities")
+    if not isinstance(ents, list) or not ents:
+        return False, "缺少 entities 列表（至少一个监控对象）"
+    for i, e in enumerate(ents):
+        if not isinstance(e, dict) or not e.get("id"):
+            return False, f"第 {i+1} 个 entity 缺少 id"
+        if e.get("aliases") is not None and not isinstance(e["aliases"], list):
+            return False, f"entity {e.get('id')} 的 aliases 必须是列表"
+    return True, f"✓ 合法：{len(d['platforms'])} 个平台 / {len(ents)} 个实体"
+
+
+def render_watch() -> str:
+    """监控配置编辑页：直接编辑 watch.yaml（唯一事实源）。保存前后端强校验，写前自动备份。"""
+    from . import watch_path
+    p = watch_path()
+    try:
+        with open(p, encoding="utf-8") as f:
+            content = f.read()
+    except Exception as e:
+        content = f"# 读取失败：{e}"
+    body = f"""
+<h1>监控配置 <span class=muted>（watch.yaml，采集的搜索对象来源）</span></h1>
+<p><a href='/'>← 返回看板</a> ｜ <a href='/login'>登录与采集</a> ｜ <a href='/keywords'>关键词库</a></p>
+<p class=muted>生效文件：<code>{html.escape(p)}</code>；保存后下轮采集/刷新即生效，无需重启。写入前自动备份到 <code>watch.yaml.bak</code>。</p>
+
+<details style='margin:8px 0'><summary class=muted style='cursor:pointer'>字段说明（点开）</summary>
+<pre class=muted>platforms: [weibo, zhihu, xiaohongshu, douyin, bilibili, tieba, hupu, smzdm, weixin, heimao]
+            # 只能填以上平台；决定采哪些站
+entities:
+  - id: youdoo            # 实体唯一标识（进 clean/报告/看板下拉）
+    type: self            # self=报告主体+预警；competitor=只做SOV/情绪对比
+    aliases: ["Youdoo Box","有度盒子"]   # aliases[0]=搜索词；全部别名用于相关性过滤（必须含其一）
+    must_not: ["Doo Prime"]              # 命中即判非本品，硬排除同名歧义
+    track_users: ["weibo:123"]           # 可选，定向抓这些账号
+    crisis_boost: ["卡顿","死机","退货"]  # 该实体专属危机词，命中→风险×1.5</pre></details>
+
+<textarea id='yaml' style='width:100%;height:420px;font:13px/1.5 Consolas,Menlo,monospace;padding:10px;border:1px solid #d0d7de;border-radius:6px'>{html.escape(content)}</textarea>
+<p>
+    <button onclick='saveWatch()' style='background:#2da44e;color:white;border:none;padding:8px 18px;border-radius:6px;cursor:pointer'>💾 保存</button>
+    <button onclick='location.reload()' style='margin-left:8px;padding:8px 18px'>撤销更改</button>
+    <span id='watchMsg' class=muted style='margin-left:12px'></span>
+</p>
+
+<script>
+function saveWatch() {{
+    const el = document.getElementById('watchMsg');
+    el.textContent = '保存中…';
+    fetch('/api/watch', {{method: 'POST', headers: {{'Content-Type': 'application/json'}},
+        body: JSON.stringify({{content: document.getElementById('yaml').value}})}})
+    .then(r => r.json()).then(d => {{
+        el.innerHTML = (d.success ? '✅ ' : '⚠️ ') + d.message;
+    }}).catch(e => {{ el.textContent = '⚠️ 请求失败'; }});
+}}
+</script>
+"""
+    return _page("监控配置", body)
 
 
 def render_config(*, saved: bool = False, test_msg: str = "") -> str:
@@ -821,6 +891,8 @@ def make_handler(db: str):
                 self.wfile.write(payload); return
             if u.path == "/login":
                 self._send(render_login()); return
+            if u.path == "/watch":
+                self._send(render_watch()); return
             store = Store(db)
             try:
                 if u.path == "/":
@@ -928,6 +1000,39 @@ def make_handler(db: str):
                     result = {"success": True, "message": f"已在浏览器打开 {platform} 登录页，请登录后点重新检测"}
                 except Exception as e:
                     result = {"success": False, "message": str(e)[:200]}
+                payload = json.dumps(result, ensure_ascii=False).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+            elif u.path == "/api/watch":
+                # 保存 watch.yaml：强校验 → 写前备份 .bak → 覆盖。校验不过绝不落盘（护单一事实源）
+                if not _write_allowed(self):
+                    self.send_error(403); return
+                from . import watch_path
+                n = int(self.headers.get("Content-Length") or 0)
+                raw = self.rfile.read(n).decode("utf-8")
+                try:
+                    content = json.loads(raw).get("content", "") if raw.startswith("{") else ""
+                except Exception:
+                    content = ""
+                ok, msg = _validate_watch(content)
+                if ok:
+                    try:
+                        import shutil
+                        p = watch_path()
+                        try:
+                            shutil.copyfile(p, p + ".bak")     # 覆盖前备份，防手滑丢配置
+                        except FileNotFoundError:
+                            pass
+                        with open(p, "w", encoding="utf-8") as f:
+                            f.write(content)
+                        result = {"success": True, "message": msg + "，已保存（下轮采集/刷新生效）"}
+                    except Exception as e:
+                        result = {"success": False, "message": f"写入失败：{str(e)[:200]}"}
+                else:
+                    result = {"success": False, "message": msg + "（未保存）"}
                 payload = json.dumps(result, ensure_ascii=False).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")

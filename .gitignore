@@ -16,3 +16,4 @@ yuqing_config.json
 .claude/
 *.log
 docs/apiKey-*.csv
+*.bak

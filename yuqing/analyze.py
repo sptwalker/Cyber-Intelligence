@@ -299,6 +299,18 @@ def analyze_pending(store, weights: Optional[Weights] = None, *, use_claude: Opt
     except Exception:
         pass  # 关键词库不可用，不影响分析
 
+    # 每实体自定义危机词（watch.yaml crisis_boost）：命中即强制 crisis 信号 → risk×1.5。
+    # 引擎无关的确定性覆盖（rule/LLM/claude 都生效），补全全局 CRISIS_WORDS 覆盖不到的产品专属词。
+    entity_crisis: dict[str, list] = {}
+    try:
+        from . import load_watch
+        for e in load_watch().get("entities", []):
+            cb = e.get("crisis_boost") or []
+            if cb:
+                entity_crisis[e["id"]] = cb
+    except Exception:
+        pass
+
     for r in rows:
         feat = feats.get(r["doc_id"]) or rule_extract(dict(r), keyword_mgr)
         if feat.get("polarity") not in ("pos", "neg", "neu"):   # LLM 残缺兜底：任何非法极性 → 规则
@@ -308,6 +320,12 @@ def analyze_pending(store, weights: Optional[Weights] = None, *, use_claude: Opt
         feat["signals"] = sig
         if "aspects" in feat and "aspects" not in sig:   # Claude 路径 aspects 折进 signals 落库
             sig["aspects"] = feat["aspects"]
+        # 每实体危机词覆盖：命中则强制 crisis（并保证负面），确定性、引擎无关
+        extra = entity_crisis.get(r["entity_id"])
+        if extra and any(w in (r["text"] or "") for w in extra):
+            sig["crisis"] = True
+            if feat.get("polarity") == "neu":
+                feat["polarity"] = "neg"
         # 打风险分：合并 clean 字段 + 抽取结果
         merged = dict(r)
         merged.update(polarity=feat["polarity"], intensity=feat.get("intensity", 0.0),
@@ -369,5 +387,19 @@ if __name__ == "__main__":
     _os.environ.pop("DEEPSEEK_API_KEY")
     assert _n == 1 and _st.conn.execute("SELECT COUNT(*) FROM features").fetchone()[0] == 1, \
         "LLM 失败必须降级规则入库，不能空转"
+
+    # crisis_boost 每实体危机词：命中"死机"(不在全局 CRISIS_WORDS)→ 强制 crisis 信号
+    import json as _json, yuqing as _pkg
+    _orig_lw = _pkg.load_watch
+    _pkg.load_watch = lambda *a, **k: {"entities": [{"id": "cb", "crisis_boost": ["死机"]}]}
+    try:
+        _st3 = _S(":memory:")
+        _st3.add_clean(_CD.build(platform="weibo", entity_id="cb", native_id="n3", text="开机就死机，体验很差"))
+        analyze_pending(_st3, now="2026-07-06T10:00:00+08:00")
+        _sig = _json.loads(_st3.conn.execute("SELECT signals FROM features").fetchone()[0])
+        assert _sig.get("crisis") is True, "crisis_boost 命中未强制 crisis"
+    finally:
+        _pkg.load_watch = _orig_lw
+
     print("OK analyze:", neg["polarity"], pos["polarity"], "| ABSA", sorted(aspects),
-          "| 路由分层✓ | 交叉分析✓ | LLM失败降级✓")
+          "| 路由分层✓ | 交叉分析✓ | LLM失败降级✓ | crisis_boost✓")
