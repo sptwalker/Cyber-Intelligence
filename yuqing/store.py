@@ -100,6 +100,29 @@ CREATE TABLE IF NOT EXISTS run_log (
 CREATE TABLE IF NOT EXISTS review (
     doc_id TEXT, kind TEXT, verdict TEXT, note TEXT, ts TEXT
 );
+CREATE TABLE IF NOT EXISTS annotations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    doc_id TEXT NOT NULL,
+    subject TEXT,          -- 主体：官方/准官方/媒体/用户·KOL（枚举见 classify.SUBJECTS）
+    stance TEXT,           -- 立场：赞扬/中立/批评/吐槽/投诉/纯传播（classify.STANCES）
+    importance TEXT,       -- 重要性：高/中/低
+    picked_words TEXT,     -- JSON: [{"word","role","span":[s,e]}]，role 取自 keywords.TAGS
+    note TEXT,
+    annotator TEXT DEFAULT 'local',
+    sample_source TEXT,    -- active/manual/queue：样本来自主动学习队列还是直链
+    entity_id TEXT,        -- 冗余自 clean，便于按实体统计
+    ts TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_ann_doc ON annotations(doc_id);
+CREATE TABLE IF NOT EXISTS account_registry (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    platform TEXT,             -- 平台（空=跨平台匹配）
+    author TEXT NOT NULL,      -- 账号昵称/handle（与 clean.author 对齐）
+    subject_type TEXT NOT NULL,-- 官方/准官方/媒体（用户·KOL 是默认兜底，不入表）
+    entity_id TEXT,            -- 归属实体（空=全局，如通用媒体号）
+    note TEXT, ts TEXT,
+    UNIQUE(platform, author)
+);
 CREATE TABLE IF NOT EXISTS watermark (
     entity_id TEXT, platform TEXT, entry TEXT, last_ts TEXT,
     PRIMARY KEY(entity_id, platform, entry)
@@ -283,6 +306,77 @@ class Store:
         r = self.conn.execute(
             "SELECT COUNT(*) n, SUM(CASE WHEN verdict<>'ok' THEN 1 ELSE 0 END) wrong FROM review").fetchone()
         return {"reviewed": r["n"] or 0, "machine_wrong": r["wrong"] or 0}
+
+    # --- Phase A: 多维标注（训练模式地基）---
+    def add_annotation(self, doc_id: str, *, subject: Optional[str] = None,
+                       stance: Optional[str] = None, importance: Optional[str] = None,
+                       picked_words: Optional[list] = None, note: str = "",
+                       sample_source: str = "manual", entity_id: Optional[str] = None,
+                       ts: str = "", annotator: str = "local") -> int:
+        """写一条多维标注。picked_words=[{word,role,span}]。append-only，id 大者为最新。"""
+        cur = self.conn.execute(
+            "INSERT INTO annotations(doc_id,subject,stance,importance,picked_words,note,"
+            "annotator,sample_source,entity_id,ts) VALUES(?,?,?,?,?,?,?,?,?,?)",
+            (doc_id, subject, stance, importance, json.dumps(picked_words or [], ensure_ascii=False),
+             note, annotator, sample_source, entity_id, ts))
+        self.conn.commit()
+        return cur.lastrowid
+
+    def annotation_candidates(self, entity_id: Optional[str] = None, limit: int = 200):
+        """未标注的机器判定帖（廉价预筛，供主动学习采样器二次打分）。已标即出队。"""
+        q = ("SELECT c.doc_id,c.platform,c.author,c.author_followers,c.text,c.url,c.publish_ts,"
+             "c.embedding,c.entity_id,f.polarity,f.confidence,f.signals,f.risk "
+             "FROM clean c JOIN features f USING(doc_id) "
+             "LEFT JOIN annotations a ON a.doc_id=c.doc_id WHERE a.doc_id IS NULL")
+        args: tuple = ()
+        if entity_id:
+            q += " AND c.entity_id=?"; args = (entity_id,)
+        q += " ORDER BY f.confidence ASC, f.risk DESC LIMIT ?"
+        return self.conn.execute(q, args + (limit,)).fetchall()
+
+    def annotated_count(self) -> int:
+        return self.conn.execute("SELECT COUNT(DISTINCT doc_id) FROM annotations").fetchone()[0]
+
+    def latest_annotation(self, doc_id: str):
+        """某帖最新一条标注（重标回填 / few-shot 范例源）。"""
+        return self.conn.execute(
+            "SELECT * FROM annotations WHERE doc_id=? ORDER BY id DESC LIMIT 1", (doc_id,)).fetchone()
+
+    def load_annotations(self, entity_id: Optional[str] = None):
+        """已标满三维的样本 ⋈ clean（含正文/粉丝/向量），供 Phase C few-shot 范例。同 doc 取最新。"""
+        q = ("SELECT a.doc_id, a.subject, a.stance, a.importance, a.picked_words, "
+             "c.text, c.author_followers, c.embedding FROM annotations a "
+             "JOIN clean c USING(doc_id) WHERE a.subject IS NOT NULL "
+             "AND a.id IN (SELECT MAX(id) FROM annotations GROUP BY doc_id)")
+        args: tuple = ()
+        if entity_id:
+            q += " AND c.entity_id=?"; args = (entity_id,)
+        return self.conn.execute(q, args).fetchall()
+
+    # --- Phase A/⑥: 官方账号白名单（主体维确定性判定）---
+    def add_account(self, author: str, subject_type: str, *, platform: str = "",
+                    entity_id: Optional[str] = None, note: str = "", ts: str = "") -> None:
+        self.conn.execute(
+            "INSERT OR REPLACE INTO account_registry(platform,author,subject_type,entity_id,note,ts) "
+            "VALUES(?,?,?,?,?,?)", (platform, author, subject_type, entity_id, note, ts))
+        self.conn.commit()
+
+    def account_type(self, author: str, platform: str = "") -> Optional[str]:
+        """查账号主体类型：精确 (platform,author) 优先，回退跨平台 (author)。未登记返回 None。"""
+        if not author:
+            return None
+        r = self.conn.execute(
+            "SELECT subject_type FROM account_registry WHERE author=? AND (platform=? OR platform='') "
+            "ORDER BY CASE WHEN platform=? THEN 0 ELSE 1 END LIMIT 1",
+            (author, platform, platform)).fetchone()
+        return r["subject_type"] if r else None
+
+    def list_accounts(self, entity_id: Optional[str] = None):
+        q = "SELECT * FROM account_registry"
+        args: tuple = ()
+        if entity_id:
+            q += " WHERE entity_id IS ? OR entity_id IS NULL"; args = (entity_id,)
+        return self.conn.execute(q + " ORDER BY subject_type, author", args).fetchall()
 
     # --- v1-C: 心跳（无人值守存活探测）---
     def record_heartbeat(self, ts: str, status: str, note: str = "") -> None:

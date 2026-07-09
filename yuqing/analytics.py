@@ -215,6 +215,80 @@ def semantic_topics(store, entity_id: str, threshold: float = 0.8, min_size: int
     return sorted(out, key=lambda x: x["size"], reverse=True)
 
 
+def active_sample(store, entity_id: Optional[str] = None, limit: int = 20) -> list[dict]:
+    """主动学习采样：从未标注帖里挑最值得人工标的代表样本。
+
+    打分=不确定性(低置信)+两模型分歧+KOL影响+风险；再按 embedding 聚类去近重（水军复制帖折叠）。
+    ★保留 ~30% 名额给 pos/neu 极性帖，保证"赞扬/中立/纯传播"立场也有样本可标（否则队列被负面淹没，
+    Phase C 分层范例的正面档永远凑不齐）。返回每条附"采样原因"标签。降级：无向量→纯打分排序。
+    """
+    import math
+    rows = [dict(r) for r in store.annotation_candidates(entity_id, limit=200)]
+    if not rows:
+        return []
+    for r in rows:
+        conf = r.get("confidence")
+        conf = 0.5 if conf is None else conf
+        unc = 1 - conf
+        disagree = 1.0 if "cross_disagree" in (r.get("signals") or "") else 0.0
+        fol = r.get("author_followers") or 0
+        kol = min(math.log10(1 + max(fol, 0)) / 6.0, 1.0)     # ≈100万粉封顶
+        risk_raw = r.get("risk") or 0
+        r["_base"] = 0.35 * unc + 0.25 * disagree + 0.20 * kol + 0.20 * min(risk_raw / 50.0, 1.0)
+        reasons = []
+        if unc >= 0.4:
+            reasons.append(f"低置信{conf:.2f}")
+        if disagree:
+            reasons.append("两模型分歧")
+        if kol >= 0.7:
+            reasons.append(f"高影响·粉{fol}")
+        if risk_raw >= 30:
+            reasons.append(f"高风险{int(risk_raw)}")
+        r["_reason"] = "·".join(reasons) or "常规样本"
+
+    rows.sort(key=lambda x: x["_base"], reverse=True)
+    n_cover = max(1, int(limit * 0.3))                        # 立场覆盖名额
+    hard = _diverse_pick(rows, limit - n_cover, cap=60)
+    picked_ids = {r["doc_id"] for r in hard}
+    pos_pool = [r for r in rows if r.get("polarity") in ("pos", "neu") and r["doc_id"] not in picked_ids]
+    cover = _diverse_pick(pos_pool, n_cover, cap=40)
+
+    out, seen = [], set()
+    for r in hard + cover:
+        if r["doc_id"] in seen:
+            continue
+        seen.add(r["doc_id"])
+        out.append({"doc_id": r["doc_id"], "platform": r.get("platform"), "author": r.get("author"),
+                    "author_followers": r.get("author_followers"), "text": r.get("text"),
+                    "url": r.get("url"), "publish_ts": r.get("publish_ts"), "entity_id": r.get("entity_id"),
+                    "polarity": r.get("polarity"), "confidence": r.get("confidence"), "risk": r.get("risk"),
+                    "reason": r["_reason"]})
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _diverse_pick(rows: list[dict], n: int, cap: int = 60) -> list[dict]:
+    """从 base 降序的 rows 里取 n 条多样代表：对 top-cap 做 embedding 聚类，每簇取 base 最高。
+
+    无向量的帖各成独立簇（不去重，符合"无法判相似"）。降级：全无向量→退化为 base 前 n。
+    """
+    if n <= 0 or not rows:
+        return []
+    from . import embed
+    pool = rows[:cap]
+    items = [(r["doc_id"], embed.from_blob(r["embedding"]) if r.get("embedding") else []) for r in pool]
+    if not any(v for _, v in items):                          # 全无向量 → 纯 base 排序
+        return pool[:n]
+    by_id = {r["doc_id"]: r for r in pool}
+    picks = []
+    for cl in embed.cluster(items, threshold=0.85):
+        rep = max((by_id[i] for i in cl), key=lambda x: x["_base"])   # 簇代表=base 最高
+        picks.append(rep)
+    picks.sort(key=lambda x: x["_base"], reverse=True)
+    return picks[:n]
+
+
 def suggest_targets(store, entity_id: str, aliases: list[str], must_not: list[str] | None = None,
                     top: int = 10, min_sim: float = 0.5) -> list[dict]:
     """监控目标语义扩展（激活 embedding）：从已采数据找与监控对象语义高相关、但当前别名未覆盖的
@@ -575,7 +649,35 @@ if __name__ == "__main__":
     assert suggest_targets(st5, "e", aliases=[]) == []          # 无别名锚→空
     assert suggest_targets(st5, "e", aliases=["  ", ""]) == []   # 全空白别名→空(不拿垃圾向量刷建议)
     _os3.environ.pop("EMBED_API_KEY")
+    _emb3.available = lambda: False                            # 硬置无 key（config.resolve 会读到本机真实 key，须 mock 才 hermetic）
     assert suggest_targets(st5, "e", aliases=["盒子"]) == []    # 无 key→空(纯语义能力)
 
+    # active_sample 主动学习采样：近重折叠 + 正面覆盖 + 无向量降级
+    from .store import Store as _SA, CleanDoc as _CDA
+    from . import embed as _embA
+    sa = _SA(":memory:")
+    def _mk(nid, pol, conf, risk, fol, vec):
+        d = _CDA.build(platform="weibo", entity_id="e", native_id=nid, text=nid, author="a" + nid)
+        sa.add_clean(d)
+        sa.conn.execute("UPDATE clean SET author_followers=?, embedding=? WHERE doc_id=?",
+                        (fol, _embA.to_blob(vec), d.doc_id))
+        sa.add_feature(d.doc_id, {"polarity": pol, "confidence": conf, "risk": risk, "signals": {}})
+    _mk("n1", "neg", 0.3, 45, 120000, [1.0, 0.0, 0.0])
+    _mk("n2", "neg", 0.3, 45, 120000, [0.99, 0.02, 0.0])       # 与 n1 近重
+    _mk("n3", "neg", 0.35, 40, 500, [0.0, 1.0, 0.0])
+    _mk("p1", "pos", 0.9, 0, 3000, [0.0, 0.0, 1.0])
+    sa.commit()
+    _res = active_sample(sa, "e", limit=4)
+    _dup = sum(1 for r in _res if r["doc_id"] in
+               [x[0] for x in sa.conn.execute("SELECT doc_id FROM clean WHERE native_id IN('n1','n2')")])
+    assert _dup <= 1, "近重帖应聚类折叠"
+    assert any(r["polarity"] == "pos" for r in _res), "应保留正面样本(立场覆盖)"
+    sb = _SA(":memory:")                                        # 无向量降级
+    for i in range(3):
+        d = _CDA.build(platform="weibo", entity_id="e", native_id=f"z{i}", text="t", author="a")
+        sb.add_clean(d); sb.add_feature(d.doc_id, {"polarity": "neg", "confidence": 0.3, "risk": 40, "signals": {}})
+    sb.commit()
+    assert len(active_sample(sb, "e", limit=5)) == 3, "无向量→纯打分排序"
+
     print(f"OK analytics: z-score+归一+时序 | BHI 好={bh_good['bhi']} 坏={bh_bad['bhi']}"
-          f" | KOL/方面/交叉/异常簇 | V3语义(归并+洗稿) | V4目标扩展 全通")
+          f" | KOL/方面/交叉/异常簇 | V3语义(归并+洗稿) | V4目标扩展 | 主动学习采样 全通")
