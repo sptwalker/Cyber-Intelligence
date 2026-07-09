@@ -340,6 +340,167 @@ def suggest_targets(store, entity_id: str, aliases: list[str], must_not: list[st
     return sorted(out, key=lambda x: (x["size"], x["avg_sim"]), reverse=True)[:top]
 
 
+# 泛词库：区分度低、到处都出现，绝不该当搜索种子（可再由 keywords tag='stopword' 运营扩充）
+STOPWORDS = {
+    "这个", "那个", "真的", "感觉", "现在", "已经", "还是", "就是", "可以", "什么", "怎么",
+    "他们", "我们", "自己", "东西", "时候", "问题", "产品", "手机", "游戏", "视频", "大家",
+    "一个", "有点", "非常", "特别", "还有", "但是", "所以", "因为", "如果", "这么", "那么",
+    "购买", "使用", "评测", "开箱", "分享", "推荐", "体验", "官方", "发布",
+}
+
+
+def _ngrams(text: str, lo: int = 2, hi: int = 4) -> set:
+    """取正文的 2-4 字候选词（无分词器下与全链字符匹配一致）。保留中文+字母数字连块
+    （产品名常含 X20/MotionX），在标点/空白处断段，段内取 n-gram。截断防爆。"""
+    out = set()
+    seg = ""
+    for ch in (text or "")[:200]:
+        if "一" <= ch <= "鿿" or ch.isalnum():
+            seg += ch
+        else:
+            seg = ""
+            continue
+        for n in range(lo, hi + 1):
+            if len(seg) >= n:
+                out.add(seg[-n:])
+    return out
+
+
+def extract_seed_candidates(store, entity_id: str, aliases: list[str], must_not=None,
+                            min_sim: float = 0.5, min_df: int = 2, min_lift: float = 3.0,
+                            min_score: float = 0.5, km=None) -> list[dict]:
+    """从"语义相关但别名未覆盖"的簇里挖候选词，打分+分流。
+
+    lift=簇内富集/全语料频率（串味核心闸门：泛词全语料到处出现→lift≈1 被拦；产品专名 lift 高放行）。
+    分流：命中立场词集→feature（判别词，进关键词库）；高 lift 专名→seed（进 watch 种子）；不确定默认 feature。
+    返回 [{word,kind,suggested_tag,score,lift,df_clu,avg_sim,source_docs,sample}]。无 embed→[]。
+    """
+    from .keywords import KeywordManager
+    km = km or KeywordManager(store)
+    clusters = suggest_targets(store, entity_id, aliases, must_not, min_sim=min_sim)
+    if not clusters:
+        return []
+    corpus = [dict(r) for r in store.joined(entity_id)]
+    N = len(corpus) or 1
+    df_c: dict[str, int] = {}                          # 全语料文档频率（惰性算）
+    stance_words = set()                               # 立场/评价词集（命中→feature）
+    for w in (km.get_complaints(entity_id) + km.get_selling_points(entity_id)
+              + km.get_competitors(entity_id) + km.get_by_tag("stopword", entity_id)):
+        stance_words.add(w["word"])
+    stop = STOPWORDS | {w["word"] for w in km.get_by_tag("stopword", entity_id)}
+    tag_of = {"complaint": {w["word"] for w in km.get_complaints(entity_id)},
+              "selling_point": {w["word"] for w in km.get_selling_points(entity_id)},
+              "competitor": {w["word"] for w in km.get_competitors(entity_id)}}
+
+    def _dfc(w):
+        if w not in df_c:
+            df_c[w] = sum(1 for r in corpus if w in (r.get("text") or ""))
+        return df_c[w]
+
+    out, seen = [], set()
+    for cl in clusters:
+        texts = [next((r for r in corpus if r["doc_id"] == d), None) for d in cl["doc_ids"]]
+        texts = [r for r in texts if r]
+        n_clu = len(texts) or 1
+        cand_df: dict[str, int] = {}
+        for r in texts:
+            for g in _ngrams(r.get("text") or ""):
+                cand_df[g] = cand_df.get(g, 0) + 1
+        for w, df_clu in cand_df.items():
+            if w in seen or w in stop or len(w) < 2 or df_clu < min_df:
+                continue
+            dfc = _dfc(w)
+            lift = (df_clu / n_clu) / max(dfc / N, 1.0 / N)
+            if lift < min_lift:
+                continue                                # 串味闸门：区分度不足→丢
+            freq = df_clu / n_clu
+            score = 0.4 * min(1, freq) + 0.3 * min(1, lift / 5) + 0.3 * cl["avg_sim"]
+            if score < min_score:
+                continue
+            seen.add(w)
+            if w in stance_words:                       # 命中立场词→判别词侧
+                tag = next((t for t, s in tag_of.items() if w in s), "related")
+                kind = "feature"
+            elif lift >= 5 and len(w) >= 3:             # 高区分度长串→当产品种子
+                tag, kind = "seed_alias", "seed"
+            else:
+                tag, kind = "related", "feature"        # 不确定默认 feature，绝不无把握扩召回
+            out.append({"word": w, "kind": kind, "suggested_tag": tag, "score": round(score, 3),
+                        "lift": round(lift, 2), "df_clu": df_clu, "avg_sim": cl["avg_sim"],
+                        "source_docs": cl["doc_ids"], "sample": cl["sample"]})
+    return sorted(out, key=lambda x: x["score"], reverse=True)
+
+
+def mine_and_queue(store, watch: dict, km=None) -> dict:
+    """遍历 self 实体挖候选词并写两路建议（feature→关键词库待审、seed→watch 种子建议）。返回计数。"""
+    from .keywords import KeywordManager
+    import json as _json
+    km = km or KeywordManager(store)
+    n_seed = n_feat = 0
+    for ent in watch.get("entities", []):
+        if ent.get("type", "self") != "self":
+            continue
+        eid = ent["id"]
+        for c in extract_seed_candidates(store, eid, ent.get("aliases") or [eid],
+                                         ent.get("must_not"), km=km):
+            try:
+                km.add_suggestion(c["word"], c["suggested_tag"], eid, score=c["score"],
+                                  reason=f"挖词·区分度×{c['lift']}·共现{c['df_clu']}",
+                                  source_docs=_json.dumps(c["source_docs"]))
+                if c["kind"] == "seed":
+                    n_seed += 1
+                else:
+                    n_feat += 1
+            except Exception:
+                pass
+    return {"seed": n_seed, "feature": n_feat}
+
+
+def append_alias(entity_id: str, word: str) -> tuple[bool, str]:
+    """把 word 追加进 watch.yaml 里该实体的 aliases（surgical 文本插入，保注释）。写前校验+备份。
+
+    仅支持单行 flow 风格 aliases: [...]（watch.yaml 现状）；不匹配→返回 False 让上层降级到编辑器。
+    """
+    import os
+    import re as _re
+    import shutil
+    from . import watch_path
+    p = watch_path()
+    try:
+        text = open(p, encoding="utf-8").read()
+    except Exception as e:
+        return False, f"读取失败：{e}"
+    if not word or word in text:
+        return False, "词为空或已存在"
+    lines = text.splitlines(keepends=True)
+    # 定位 id: <entity> 之后、下一个 id: 之前的 aliases 行
+    in_block = False
+    for i, ln in enumerate(lines):
+        if _re.match(rf"\s*-\s*id:\s*{_re.escape(entity_id)}\s*$", ln):
+            in_block = True
+            continue
+        if in_block and _re.match(r"\s*-\s*id:\s*", ln):
+            break                                       # 进入下一个实体块，未找到 aliases
+        if in_block:
+            m = _re.match(r"(?P<pre>\s*aliases:\s*\[)(?P<body>.*?)(?P<post>\]\s*.*)$", ln)
+            if m:
+                new = f'{m.group("pre")}{m.group("body")}, "{word}"{m.group("post")}'
+                lines[i] = new if new.endswith("\n") or not ln.endswith("\n") else new
+                cand = "".join(lines)
+                # 复用 dashboard 的结构校验（延迟导入避免循环）
+                from .dashboard import _validate_watch
+                ok, msg = _validate_watch(cand)
+                if not ok:
+                    return False, f"改后不合法：{msg}"
+                try:
+                    shutil.copyfile(p, p + ".bak")
+                except FileNotFoundError:
+                    pass
+                open(p, "w", encoding="utf-8").write(cand)
+                return True, f"已追加到 {entity_id}.aliases"
+    return False, "未找到该实体的单行 aliases（可能是 block 风格），请用编辑器手动加"
+
+
 # 品牌健康指数 BHI（均衡型，0-100，越高越健康）。权重可调（config 旋钮）。
 BHI_WEIGHTS = {"sentiment": 0.40, "volume": 0.20, "crisis": 0.30, "aspect": 0.10}
 
@@ -648,9 +809,21 @@ if __name__ == "__main__":
     assert all("天气" not in x["sample"] for x in sug)         # 无关词不建议
     assert suggest_targets(st5, "e", aliases=[]) == []          # 无别名锚→空
     assert suggest_targets(st5, "e", aliases=["  ", ""]) == []   # 全空白别名→空(不拿垃圾向量刷建议)
+
+    # extract_seed_candidates 挖词+分流：产品专名 lift 高→seed；泛词被 lift/stopword 拦
+    for i in range(8):                                          # 填充语料使"机顶盒"全语料稀有→lift 高
+        d = _CD.build(platform="weibo", entity_id="e", native_id=f"pad{i}", text="今天天气真不错呀")
+        st5.add_clean(d); st5.add_feature(d.doc_id, {"polarity": "neu"})   # 无 embedding→不进簇
+    st5.commit()
+    cand = extract_seed_candidates(st5, "e", aliases=["盒子"], min_df=2, min_lift=3.0, min_score=0.3)
+    words = {c["word"]: c for c in cand}
+    assert "机顶盒" in words, ("应挖出'机顶盒'", list(words))     # 簇内高频、语料稀有
+    assert words["机顶盒"]["kind"] == "seed" and words["机顶盒"]["suggested_tag"] == "seed_alias", words["机顶盒"]
+    assert "天气" not in words and "不错" not in words          # 泛词/填充词被 stopword/lift 拦
     _os3.environ.pop("EMBED_API_KEY")
     _emb3.available = lambda: False                            # 硬置无 key（config.resolve 会读到本机真实 key，须 mock 才 hermetic）
     assert suggest_targets(st5, "e", aliases=["盒子"]) == []    # 无 key→空(纯语义能力)
+    assert extract_seed_candidates(st5, "e", aliases=["盒子"]) == []   # 无 embed→空
 
     # active_sample 主动学习采样：近重折叠 + 正面覆盖 + 无向量降级
     from .store import Store as _SA, CleanDoc as _CDA
@@ -680,4 +853,4 @@ if __name__ == "__main__":
     assert len(active_sample(sb, "e", limit=5)) == 3, "无向量→纯打分排序"
 
     print(f"OK analytics: z-score+归一+时序 | BHI 好={bh_good['bhi']} 坏={bh_bad['bhi']}"
-          f" | KOL/方面/交叉/异常簇 | V3语义(归并+洗稿) | V4目标扩展 | 主动学习采样 全通")
+          f" | KOL/方面/交叉/异常簇 | V3语义(归并+洗稿) | V4目标扩展 | 主动学习采样 | 挖词分流 全通")

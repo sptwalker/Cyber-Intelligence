@@ -469,7 +469,7 @@ def render_keywords(store: Store, query_params: dict) -> str:
         kw_rows = "<tr><td colspan='6' class=muted>暂无关键词</td></tr>"
 
     # AI推荐列表
-    suggestions = km.list_suggestions(status='pending', entity_id=current_entity)
+    suggestions = km.list_suggestions(status='pending', entity_id=current_entity, exclude_tag='seed_alias')
     sug_rows = ""
     for sug in suggestions[:10]:
         tag_label = TAGS.get(sug['suggested_tag'], sug['suggested_tag'])
@@ -781,8 +781,18 @@ def render_watch() -> str:
         content = f"# 读取失败：{e}"
     body = f"""
 <h1>监控配置 <span class=muted>（watch.yaml，采集的搜索对象来源）</span></h1>
-<p><a href='/'>← 返回看板</a> ｜ <a href='/login'>登录与采集</a> ｜ <a href='/keywords'>关键词库</a></p>
+<p><a href='/'>← 返回看板</a> ｜ <a href='/login'>登录与采集</a> ｜ <a href='/keywords'>关键词库</a> ｜ <a href='/accounts'>账号白名单</a></p>
 <p class=muted>生效文件：<code>{html.escape(p)}</code>；保存后下轮采集/刷新即生效，无需重启。写入前自动备份到 <code>watch.yaml.bak</code>。</p>
+
+<div style='margin:16px 0;padding:14px;background:#f6f8fa;border-radius:8px'>
+  <b>🌱 种子词建议</b> <span class=muted>（系统挖的"产品词"，确认后写入 aliases 扩召回；评价词自动分流到 <a href='/keywords'>关键词库</a>）</span>
+  <button onclick='mineSeeds()' style='margin-left:10px;padding:4px 12px;border-radius:6px;border:1px solid #d0d7de;cursor:pointer'>🔄 生成建议</button>
+  <span id='mineMsg' class=muted style='margin-left:8px'></span>
+  <table id='seedTbl' style='margin-top:8px;display:none'>
+    <thead><tr><th>词</th><th>区分度</th><th>共现</th><th>来源</th><th>操作</th></tr></thead>
+    <tbody id='seedRows'></tbody>
+  </table>
+</div>
 
 <details style='margin:8px 0'><summary class=muted style='cursor:pointer'>字段说明（点开）</summary>
 <pre class=muted>platforms: [weibo, zhihu, xiaohongshu, douyin, bilibili, tieba, hupu, smzdm, weixin, heimao]
@@ -812,9 +822,74 @@ function saveWatch() {{
         el.innerHTML = (d.success ? '✅ ' : '⚠️ ') + d.message;
     }}).catch(e => {{ el.textContent = '⚠️ 请求失败'; }});
 }}
+function esc(s){{return (s||'').replace(/[&<>"]/g,c=>({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}}[c]));}}
+function loadSeeds() {{
+  fetch('/api/seed/list').then(r=>r.json()).then(d=>{{
+    const rows=d.seeds||[]; const tb=document.getElementById('seedRows');
+    document.getElementById('seedTbl').style.display = rows.length?'table':'none';
+    tb.innerHTML = rows.map(s=>'<tr><td><b>'+esc(s.word)+'</b></td><td>×'+
+      (s.reason||'').replace(/[^0-9.×]/g,'').slice(0,5)+'</td><td>'+esc(s.reason||'')+
+      '</td><td class=muted>'+esc((s.source_docs||'').slice(0,30))+'</td><td>'+
+      '<button onclick="seedAct('+s.id+',\\'approve\\')" style="background:#2da44e;color:#fff;border:none;padding:3px 10px;border-radius:5px;cursor:pointer">✓加入aliases</button> '+
+      '<button onclick="seedAct('+s.id+',\\'reject\\')" style="padding:3px 8px">✗</button></td></tr>').join('');
+    if(!rows.length) document.getElementById('mineMsg').textContent='暂无待确认种子词';
+  }});
+}}
+function mineSeeds() {{
+  document.getElementById('mineMsg').textContent='挖词中…（需 EMBED key + 已向量化数据）';
+  fetch('/api/seed',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{action:'mine'}})}})
+    .then(r=>r.json()).then(d=>{{ document.getElementById('mineMsg').textContent=d.message||''; loadSeeds(); }});
+}}
+function seedAct(id, action) {{
+  fetch('/api/seed',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{action:action,id:id}})}})
+    .then(r=>r.json()).then(d=>{{ document.getElementById('mineMsg').textContent=d.message||''; loadSeeds(); }});
+}}
+loadSeeds();
 </script>
 """
     return _page("监控配置", body)
+
+
+def render_accounts(store: Store) -> str:
+    """官方账号白名单管理：登记官方/准官方/媒体账号，主体维确定性判定用。"""
+    rows = ""
+    for a in store.list_accounts():
+        a = dict(a)
+        rows += (f"<tr><td>{html.escape(a.get('platform') or '(全平台)')}</td>"
+                 f"<td>{html.escape(a['author'])}</td><td>{html.escape(a['subject_type'])}</td>"
+                 f"<td class=muted>{html.escape(a.get('entity_id') or '')}</td>"
+                 f"<td><button onclick='delAcct({a['id']})'>✕</button></td></tr>")
+    if not rows:
+        rows = "<tr><td colspan=5 class=muted>暂无登记账号（未登记的一律判为 用户·KOL）</td></tr>"
+    body = f"""
+<h1>官方账号白名单 <span class=muted>（主体维确定性判定）</span></h1>
+<p><a href='/'>← 返回看板</a> ｜ <a href='/watch'>监控配置</a> ｜ <a href='/annotate'>标注</a></p>
+<p class=muted>登记官方/准官方/媒体账号，分析时命中即确定性判主体（盖过 LLM）；未登记默认"用户·KOL"。</p>
+<div style='margin:14px 0;padding:12px;background:#f6f8fa;border-radius:8px'>
+  <b>添加</b>：账号 <input id='au' placeholder='昵称，须与帖子作者一致' style='width:220px'>
+  类型 <select id='st'><option>官方</option><option>准官方</option><option>媒体</option></select>
+  平台 <input id='pf' placeholder='留空=全平台' style='width:90px'>
+  <button onclick='addAcct()' style='background:#2da44e;color:#fff;border:none;padding:5px 14px;border-radius:6px;cursor:pointer'>+ 添加</button>
+  <span id='acctMsg' class=muted style='margin-left:8px'></span>
+</div>
+<table><thead><tr><th>平台</th><th>账号</th><th>类型</th><th>实体</th><th></th></tr></thead>
+<tbody>{rows}</tbody></table>
+<script>
+function addAcct() {{
+  const au=document.getElementById('au').value.trim();
+  if(!au){{document.getElementById('acctMsg').textContent='请填账号';return;}}
+  fetch('/api/accounts',{{method:'POST',headers:{{'Content-Type':'application/json'}},
+    body:JSON.stringify({{action:'add',author:au,subject_type:document.getElementById('st').value,platform:document.getElementById('pf').value.trim()}})}})
+    .then(r=>r.json()).then(d=>{{ if(d.success) location.reload(); else document.getElementById('acctMsg').textContent=d.message||'失败'; }});
+}}
+function delAcct(id) {{
+  if(!confirm('删除该账号登记？')) return;
+  fetch('/api/accounts',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{action:'delete',id:id}})}})
+    .then(r=>r.json()).then(d=>{{ if(d.success) location.reload(); }});
+}}
+</script>
+"""
+    return _page("账号白名单", body)
 
 
 def render_annotate(store: Store, query_params: dict) -> str:
@@ -1057,6 +1132,19 @@ def make_handler(db: str):
                     body = render_keywords(store, parse_qs(u.query))
                 elif u.path == "/annotate":
                     body = render_annotate(store, parse_qs(u.query))
+                elif u.path == "/accounts":
+                    body = render_accounts(store)
+                elif u.path == "/api/seed/list":
+                    from .keywords import KeywordManager
+                    km = KeywordManager(store)
+                    entity_id = parse_qs(u.query).get("entity", [None])[0]
+                    seeds = km.list_suggestions(status='pending', entity_id=entity_id, tag='seed_alias')
+                    payload = json.dumps({"seeds": seeds}, ensure_ascii=False, default=str).encode("utf-8")
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Content-Length", str(len(payload)))
+                    self.end_headers()
+                    self.wfile.write(payload); return
                 elif u.path == "/api/annotate/queue":
                     from . import analytics
                     entity_id = parse_qs(u.query).get("entity", [None])[0]
@@ -1074,7 +1162,7 @@ def make_handler(db: str):
                     tag = parse_qs(u.query).get("tag", [None])[0]
                     entity_id = parse_qs(u.query).get("entity", [None])[0]
                     keywords = km.list(tag=tag, entity_id=entity_id)
-                    suggestions = km.list_suggestions(status='pending', entity_id=entity_id)
+                    suggestions = km.list_suggestions(status='pending', entity_id=entity_id, exclude_tag='seed_alias')
                     payload = json.dumps({
                         'keywords': keywords,
                         'suggestions': suggestions
@@ -1283,6 +1371,74 @@ def make_handler(db: str):
                             except Exception:
                                 pass                                    # 重复/异常不阻断标注保存
                         result = {"success": True, "message": "已保存"}
+                    payload = json.dumps(result, ensure_ascii=False).encode("utf-8")
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Content-Length", str(len(payload)))
+                    self.end_headers()
+                    self.wfile.write(payload)
+                finally:
+                    store.close()
+            elif u.path == "/api/seed":
+                # 种子建议：mine 挖词 / approve 写回 watch.yaml aliases / reject
+                if not _write_allowed(self):
+                    self.send_error(403); return
+                store = Store(db)
+                try:
+                    from .keywords import KeywordManager
+                    from . import analytics, load_watch
+                    n = int(self.headers.get("Content-Length") or 0)
+                    d = json.loads(self.rfile.read(n).decode("utf-8"))
+                    act = d.get("action")
+                    km = KeywordManager(store)
+                    if act == "mine":
+                        try:
+                            cnt = analytics.mine_and_queue(store, load_watch(), km=km)
+                            result = {"success": True, "message": f"挖词完成：种子 {cnt['seed']} · 判别词 {cnt['feature']}"}
+                        except Exception as e:
+                            result = {"success": False, "message": f"挖词失败：{str(e)[:150]}"}
+                    elif act == "approve":
+                        sug = next((s for s in km.list_suggestions(status='pending', tag='seed_alias')
+                                    if s["id"] == int(d.get("id", 0))), None)
+                        if not sug:
+                            result = {"success": False, "message": "建议不存在"}
+                        else:
+                            ok, msg = analytics.append_alias(sug["entity_id"], sug["word"])
+                            if ok:
+                                km.mark_suggestion(sug["id"], "approved")
+                            result = {"success": ok, "message": msg}
+                    elif act == "reject":
+                        ok = km.reject_suggestion(int(d.get("id", 0)))
+                        result = {"success": ok, "message": "已忽略" if ok else "失败"}
+                    else:
+                        result = {"success": False, "message": "未知操作"}
+                    payload = json.dumps(result, ensure_ascii=False).encode("utf-8")
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Content-Length", str(len(payload)))
+                    self.end_headers()
+                    self.wfile.write(payload)
+                finally:
+                    store.close()
+            elif u.path == "/api/accounts":
+                # 官方账号白名单：add / delete
+                if not _write_allowed(self):
+                    self.send_error(403); return
+                import datetime as _dt3
+                store = Store(db)
+                try:
+                    n = int(self.headers.get("Content-Length") or 0)
+                    d = json.loads(self.rfile.read(n).decode("utf-8"))
+                    act = d.get("action")
+                    if act == "add" and (d.get("author") or "").strip() and d.get("subject_type") in ("官方", "准官方", "媒体"):
+                        store.add_account(d["author"].strip(), d["subject_type"],
+                                          platform=(d.get("platform") or "").strip(),
+                                          note="", ts=_dt3.datetime.now().isoformat(timespec="seconds"))
+                        result = {"success": True, "message": "已添加"}
+                    elif act == "delete":
+                        result = {"success": store.delete_account(int(d.get("id", 0))), "message": "已删除"}
+                    else:
+                        result = {"success": False, "message": "参数不合法（账号必填，类型须官方/准官方/媒体）"}
                     payload = json.dumps(result, ensure_ascii=False).encode("utf-8")
                     self.send_response(200)
                     self.send_header("Content-Type", "application/json; charset=utf-8")

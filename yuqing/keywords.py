@@ -289,27 +289,35 @@ class KeywordManager:
             self.conn.commit()
             return 0
 
-    def list_suggestions(self, status: str = 'pending', entity_id: Optional[str] = None) -> list[dict]:
-        """列出推荐词
-
-        Args:
-            status: pending/approved/rejected
-            entity_id: 实体ID（可选）
-
-        Returns:
-            推荐列表
-        """
+    def list_suggestions(self, status: str = 'pending', entity_id: Optional[str] = None,
+                         tag: Optional[str] = None, exclude_tag: Optional[str] = None) -> list[dict]:
+        """列出推荐词。tag=只取该建议标签；exclude_tag=排除某标签（如 /keywords 排除 seed_alias）。"""
         sql = 'SELECT * FROM keyword_suggestions WHERE status=?'
         params = [status]
 
         if entity_id is not None:
             sql += ' AND entity_id=?'
             params.append(entity_id)
+        if tag is not None:
+            sql += ' AND suggested_tag=?'
+            params.append(tag)
+        if exclude_tag is not None:
+            sql += ' AND suggested_tag<>?'
+            params.append(exclude_tag)
 
         sql += ' ORDER BY score DESC, suggested_at DESC'
 
         rows = self.conn.execute(sql, params).fetchall()
         return [dict(row) for row in rows]
+
+    def mark_suggestion(self, suggestion_id: int, status: str) -> bool:
+        """仅更新建议状态（不写关键词库）。供种子建议 approve（词已写 watch.yaml）用。"""
+        now = datetime.now().isoformat(timespec='seconds')
+        cur = self.conn.execute(
+            'UPDATE keyword_suggestions SET status=?, reviewed_at=? WHERE id=?',
+            (status, now, suggestion_id))
+        self.conn.commit()
+        return cur.rowcount > 0
 
     def approve_suggestion(self, suggestion_id: int) -> bool:
         """批准推荐（添加到正式词库）
@@ -326,6 +334,8 @@ class KeywordManager:
             return False
 
         sug = dict(row)
+        if sug['suggested_tag'] == 'seed_alias':      # 种子词走 watch.yaml，不进关键词库（防串味）
+            return False
 
         # 添加到keywords表
         try:

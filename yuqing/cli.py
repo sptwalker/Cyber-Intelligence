@@ -73,6 +73,10 @@ def main(argv: list[str]) -> int:
         elif cmd == "suggest":                             # 语义扩展：建议加入监控的新词/话题
             from . import analytics
             watch = load_watch()
+            if "--write" in args:                          # 挖词并写入建议队列（feature→词库、seed→watch）
+                cnt = analytics.mine_and_queue(store, watch)
+                print(f"已写入建议：种子 {cnt['seed']} 个（/watch 确认）· 判别词 {cnt['feature']} 个（/keywords 确认）")
+                return 0
             any_out = False
             for ent in watch.get("entities", []):
                 if ent.get("type", "self") != "self":

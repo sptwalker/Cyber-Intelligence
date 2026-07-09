@@ -378,6 +378,11 @@ class Store:
             q += " WHERE entity_id IS ? OR entity_id IS NULL"; args = (entity_id,)
         return self.conn.execute(q + " ORDER BY subject_type, author", args).fetchall()
 
+    def delete_account(self, account_id: int) -> bool:
+        cur = self.conn.execute("DELETE FROM account_registry WHERE id=?", (account_id,))
+        self.conn.commit()
+        return cur.rowcount > 0
+
     # --- v1-C: 心跳（无人值守存活探测）---
     def record_heartbeat(self, ts: str, status: str, note: str = "") -> None:
         """每次跑批后记录心跳。last_success 仅在成功时前移，供 deadman 判定'多久没成功了'。"""
