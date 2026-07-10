@@ -14,7 +14,8 @@ _ORDER = {"ok": 0, "suspect": 1, "fail": 2}
 DROP_RATIO = 0.30  # 低于近期基线的 30% 判 suspect
 
 
-def assess(store, *, platform: str, entity_id: str, n_fetched: int, status: str) -> str:
+def assess(store, *, platform: str, entity_id: str, n_fetched: int, status: str,
+           entry: str = "", source_query: str = "") -> str:
     """单次 (实体,平台) 采集的健康态。
 
     关键前提：登录失效在我们所有平台都是**显式**的——opencli 适配器返回 AUTH_REQUIRED→异常，
@@ -23,7 +24,11 @@ def assess(store, *, platform: str, entity_id: str, n_fetched: int, status: str)
     """
     if status != "ok":
         return "fail"                                    # 采集异常/登录失效(显式)
-    baseline = store.platform_baseline(platform, entity_id)
+    try:
+        baseline = store.platform_baseline(
+            platform, entity_id, entry=entry, source_query=source_query)
+    except TypeError:  # 兼容测试桩/旧扩展实现
+        baseline = store.platform_baseline(platform, entity_id)
     if n_fetched == 0:
         return "suspect" if baseline else "ok"           # 有历史却归零=可疑；无历史=真空
     if baseline and n_fetched < baseline * DROP_RATIO:

@@ -42,22 +42,28 @@ def evaluate(store: Store, *, now: str, health_by_platform: Optional[dict] = Non
     out: list[dict] = []
 
     # 1) 舆情风险预警（仅自有实体）
-    for r in store.joined():
+    for r in store.joined_with_entities():
         if r["polarity"] != "neg":
             continue
-        if self_entities is not None and r["entity_id"] not in self_entities:
+        entity_id = r["matched_entity_id"]
+        if self_entities is not None and entity_id not in self_entities:
             continue                                     # 竞品负面不告警
         signals = json.loads(r["signals"] or "{}")
         lvl = _level(r["risk"] or 0.0, bool(signals.get("crisis")))
         if not lvl:
             continue
-        ck = r["content_cluster"] or r["doc_id"]     # 事件簇为单位
+        raw_cluster = r["content_cluster"] or r["doc_id"]
+        ck = f"risk:{entity_id}:{raw_cluster}"        # 实体隔离，避免多品牌同文案互相抑制
         if store.recent_alert(ck, since):
             continue
         store.record_alert(ck, lvl, r["doc_id"], r["summary"] or "", now)
+        incident = store.create_incident(
+            entity_id=entity_id, cluster_key=raw_cluster, level=lvl,
+            doc_id=r["doc_id"], summary=r["summary"] or "", ts=now)
         out.append({"level": lvl, "kind": "risk", "platform": r["platform"],
                     "risk": r["risk"], "summary": r["summary"] or "", "url": r["url"] or "",
-                    "doc_id": r["doc_id"]})
+                    "doc_id": r["doc_id"], "entity_id": entity_id,
+                    "incident_id": incident["incident_id"], "status": incident["status"]})
 
     # 2) 数据健康预警（静默失败）——fail/suspect 各自成簇冷却
     for platform, state in (health_by_platform or {}).items():
@@ -89,13 +95,58 @@ def format_card(alerts: list[dict]) -> str:
 
 def dispatch(store: Store, *, now: str, health_by_platform: Optional[dict] = None,
              self_entities: Optional[set] = None, webhook: Optional[str] = None) -> list[dict]:
-    """算 + 推。返回本轮实际发出的预警。push_feishu 无 webhook 时自动 no-op。"""
+    """算 + 推到分析师确认通道。P0/P1 均先待确认，不直接进入高层通道。"""
     alerts = evaluate(store, now=now, health_by_platform=health_by_platform,
                       self_entities=self_entities)
     store.commit()
     if alerts:
-        push_feishu_alert_card(alerts, webhook=webhook)   # 升级为飞书卡片（P0红/P1橙）
+        if webhook is None:
+            from . import config
+            webhook = config.resolve("FEISHU_ALERT_WEBHOOK") or config.resolve("FEISHU_WEBHOOK")
+        push_feishu_alert_card(alerts, webhook=webhook)
     return alerts
+
+
+def transition(store: Store, incident_id: str, action: str, *, actor: str,
+               now: str, note: str = "", executive_webhook: Optional[str] = None) -> dict:
+    """人工处置事件；P0 confirmed 后才升级到高层通道。"""
+    target = {"confirm": "confirmed", "suppress": "suppressed",
+              "escalate": "escalated", "resolve": "resolved"}.get(action)
+    incident = store.get_incident(incident_id)
+    if not target or not incident:
+        return {"success": False, "message": "事件不存在或操作非法"}
+    from . import config
+    executive_webhook = executive_webhook or config.resolve("FEISHU_EXEC_WEBHOOK")
+
+    def _push_executive(item: dict) -> bool:
+        if not executive_webhook:
+            return False
+        try:
+            return push_feishu_alert_card([{
+                "level": item["level"], "kind": "risk", "platform": "已人工确认",
+                "risk": "—", "summary": item["summary"], "url": "",
+                "incident_id": incident_id,
+            }], webhook=executive_webhook)
+        except Exception:
+            return False
+
+    # 显式 escalate 必须先真正触达高层，失败则不伪造状态。
+    if target == "escalated":
+        if incident["status"] != "confirmed":
+            return {"success": False, "message": f"不允许从 {incident['status']} 直接升级高层"}
+        if not _push_executive(incident):
+            return {"success": False, "message": "高层 Webhook 未配置或推送失败，事件仍保持 confirmed"}
+    if not store.transition_incident(incident_id, target, actor=actor, note=note, ts=now):
+        return {"success": False, "message": f"不允许从 {incident['status']} 执行 {action}"}
+    updated = store.get_incident(incident_id)
+    pushed = target == "escalated"
+    if target == "confirmed" and updated["level"] == "P0":
+        pushed = _push_executive(updated)
+        if pushed:
+            store.transition_incident(incident_id, "escalated", actor=actor,
+                                      note=note or "P0 已推送高层", ts=now)
+            updated = store.get_incident(incident_id)
+    return {"success": True, "incident": updated, "executive_pushed": pushed}
 
 
 if __name__ == "__main__":

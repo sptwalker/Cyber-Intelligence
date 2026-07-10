@@ -15,6 +15,8 @@ from pathlib import Path
 # 设置页暴露的字段： (key, 标签, 是否密钥需脱敏)
 FIELDS = [
     ("FEISHU_WEBHOOK", "飞书机器人 Webhook", True),
+    ("FEISHU_ALERT_WEBHOOK", "飞书分析师预警 Webhook（留空复用通用 Webhook）", True),
+    ("FEISHU_EXEC_WEBHOOK", "飞书高层危机 Webhook（仅人工确认 P0 后推送）", True),
     # 飞书 OAuth 网页登录（企业应用身份）：App ID/回调地址明文可显，App Secret 脱敏。
     ("FEISHU_APP_ID", "飞书应用 App ID", False),
     ("FEISHU_APP_SECRET", "飞书应用 App Secret", True),

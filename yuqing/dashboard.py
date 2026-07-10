@@ -132,6 +132,10 @@ def render_index(store: Store) -> str:
     pending = store.pending_review_count()
     review_line = (f"<p class=muted>📋 待人工复核 <b>{pending}</b> 条"
                    f"（<code>python -m yuqing.cli review</code>）</p>" if pending else "")
+    pending_incidents = len(store.list_incidents(status="pending_confirmation", limit=1000))
+    incident_line = (f"<p style='color:#cf222e;font-weight:600'>🚨 待确认危机事件 <b>{pending_incidents}</b> 条 "
+                     f"（<code>python -m yuqing.cli incidents pending_confirmation</code>）</p>"
+                     if pending_incidents else "")
     annotated = store.annotated_count()
     annotate_line = (f"<p class=muted>📝 已标注 <b>{annotated}</b> 条 · "
                      f"<a href='/annotate'>去标注</a></p>")
@@ -152,7 +156,7 @@ def render_index(store: Store) -> str:
                 + "　｜　立场：" + " · ".join(f"{k} {v}" for k, v in stance_c.most_common()) + "</p>")
     else:
         dist = "<p class=muted>🏷️ 多维标签：暂无（标注样本后重跑分析生效）</p>"
-    dist_line = annotate_line + dist
+    dist_line = incident_line + annotate_line + dist
     from . import config as _cfg
     _m = _cfg.mode()
     _mode_label = "训练 training" if _m == "training" else "日常 daily"
@@ -1089,6 +1093,12 @@ def _require_auth(handler) -> dict | None:
 def _cookie_header(sid: str, *, clear: bool = False) -> str:
     """构造 Set-Cookie：HttpOnly + SameSite=Lax + Path=/。clear=True 时立即过期以登出。"""
     parts = [f"{SESSION_COOKIE}={'' if clear else sid}", "Path=/", "HttpOnly", "SameSite=Lax"]
+    try:
+        from . import config
+        if config.resolve("FEISHU_REDIRECT_URI").lower().startswith("https://"):
+            parts.append("Secure")
+    except Exception:
+        pass
     parts.append("Max-Age=0" if clear else f"Max-Age={SESSION_TTL}")
     return "; ".join(parts)
 
@@ -1211,6 +1221,23 @@ def _write_allowed(handler) -> bool:
     return True
 
 
+def _mutation_allowed(handler) -> bool:
+    """业务写接口：本机请求沿用旧保护；远程请求必须 OAuth 登录且同源。"""
+    if _write_allowed(handler):
+        return True
+    if _require_auth(handler) is None:
+        return False
+    h = handler.headers
+    sfs = h.get("Sec-Fetch-Site")
+    if sfs and sfs not in ("same-origin", "none"):
+        return False
+    host = (h.get("Host") or "").split(":")[0].lower()
+    origin = h.get("Origin")
+    if origin and (urlparse(origin).hostname or "").lower() != host:
+        return False
+    return bool(host)
+
+
 def make_handler(db: str):
     class Handler(BaseHTTPRequestHandler):
         def _send(self, body: str, code: int = 200):
@@ -1277,10 +1304,16 @@ def make_handler(db: str):
                 self._auth_logout(); return
             # /config 维持原有本机保护（SSH 隧道用），不走飞书 OAuth
             if u.path == "/config":
+                if not _write_allowed(self):
+                    self.send_error(403); return
                 self._send(render_config()); return
             if u.path == "/config/test":
+                if not _write_allowed(self):
+                    self.send_error(403); return
                 self._send(render_config(test_msg=_run_test(parse_qs(u.query).get("p", [""])[0]))); return
             if u.path == "/v2":
+                if not _write_allowed(self) and _require_auth(self) is None:
+                    self._redirect(f"/auth/login?next={quote(self.path, safe='')}"); return
                 # 新版前端（Ant Design + 完整架构）
                 from pathlib import Path
                 html_path = Path(__file__).parent / 'dashboard_v2.html'
@@ -1288,6 +1321,8 @@ def make_handler(db: str):
                     self._send(f.read())
                 return
             if u.path == "/api/run/status":
+                if not (_write_allowed(self) or _require_auth(self)):
+                    self.send_error(403); return
                 payload = json.dumps({"running": _run_state["running"], "last": _run_state["last"],
                                       "current": _run_state["current"]},
                                      ensure_ascii=False).encode("utf-8")
@@ -1297,6 +1332,8 @@ def make_handler(db: str):
                 self.end_headers()
                 self.wfile.write(payload); return
             if u.path == "/api/login/status":
+                if not _write_allowed(self):
+                    self.send_error(403); return
                 from . import login, load_watch
                 try:
                     platforms = load_watch().get("platforms", [])
@@ -1312,11 +1349,15 @@ def make_handler(db: str):
                 self.end_headers()
                 self.wfile.write(payload); return
             if u.path == "/login":
+                if not _write_allowed(self):
+                    self.send_error(403); return
                 self._send(render_login()); return
             if u.path == "/watch":
+                if not _write_allowed(self):
+                    self.send_error(403); return
                 self._send(render_watch()); return
-            # 其余所有页面路由：飞书 OAuth 登录后才可访问，未登录 302 到登录页并带回跳路径
-            if _require_auth(self) is None:
+            # 本机保持零配置可用；远程访问必须飞书 OAuth 登录。
+            if not _write_allowed(self) and _require_auth(self) is None:
                 self._redirect(f"/auth/login?next={quote(self.path, safe='')}"); return
             store = Store(db)
             try:
@@ -1385,6 +1426,15 @@ def make_handler(db: str):
                     self.send_header("Content-Length", str(len(payload)))
                     self.end_headers()
                     self.wfile.write(payload); return
+                elif u.path == "/api/incidents":
+                    status = parse_qs(u.query).get("status", [None])[0]
+                    payload = json.dumps({"incidents": store.list_incidents(status=status)},
+                                         ensure_ascii=False, default=str).encode("utf-8")
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Content-Length", str(len(payload)))
+                    self.end_headers()
+                    self.wfile.write(payload); return
                 else:
                     self.send_error(404); return
             finally:
@@ -1403,7 +1453,7 @@ def make_handler(db: str):
                 self._send(render_config(saved=True))
             elif u.path == "/api/run":
                 # 触发一次跑批（collect→analyze→report），后台线程执行，防并发
-                if not _write_allowed(self):
+                if not _mutation_allowed(self):
                     self.send_error(403); return
                 with _run_lock:
                     if _run_state["running"]:
@@ -1422,7 +1472,7 @@ def make_handler(db: str):
                 self.wfile.write(payload)
             elif u.path == "/api/run/stop":
                 # 协作式停止：置标志，采集在下个平台边界中止（已采数据保留）
-                if not _write_allowed(self):
+                if not _mutation_allowed(self):
                     self.send_error(403); return
                 if _run_state["running"]:
                     _run_state["stop"] = True
@@ -1491,7 +1541,7 @@ def make_handler(db: str):
                 self.wfile.write(payload)
             elif u.path == "/api/keywords":
                 # 关键词API：添加/删除/审核
-                if not _write_allowed(self):
+                if not _mutation_allowed(self):
                     self.send_error(403); return
                 store = Store(db)
                 try:
@@ -1549,7 +1599,7 @@ def make_handler(db: str):
                     store.close()
             elif u.path == "/api/annotate":
                 # 多维标注落库 + 圈词进关键词库待审（product_name 额外进种子建议，扩召回）
-                if not _write_allowed(self):
+                if not _mutation_allowed(self):
                     self.send_error(403); return
                 import datetime as _dt2
                 store = Store(db)
@@ -1594,7 +1644,7 @@ def make_handler(db: str):
                     store.close()
             elif u.path == "/api/seed":
                 # 种子建议：mine 挖词 / approve 写回 watch.yaml aliases / reject
-                if not _write_allowed(self):
+                if not _mutation_allowed(self):
                     self.send_error(403); return
                 store = Store(db)
                 try:
@@ -1635,7 +1685,7 @@ def make_handler(db: str):
                     store.close()
             elif u.path == "/api/accounts":
                 # 官方账号白名单：add / delete
-                if not _write_allowed(self):
+                if not _mutation_allowed(self):
                     self.send_error(403); return
                 import datetime as _dt3
                 store = Store(db)
@@ -1654,6 +1704,27 @@ def make_handler(db: str):
                         result = {"success": False, "message": "参数不合法（账号必填，类型须官方/准官方/媒体）"}
                     payload = json.dumps(result, ensure_ascii=False).encode("utf-8")
                     self.send_response(200)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Content-Length", str(len(payload)))
+                    self.end_headers()
+                    self.wfile.write(payload)
+                finally:
+                    store.close()
+            elif u.path == "/api/incidents":
+                if not _mutation_allowed(self):
+                    self.send_error(403); return
+                store = Store(db)
+                try:
+                    from . import alerts as _alerts
+                    n = int(self.headers.get("Content-Length") or 0)
+                    d = json.loads(self.rfile.read(n).decode("utf-8"))
+                    user = _require_auth(self) or {}
+                    actor = user.get("name") or user.get("open_id") or "local"
+                    result = _alerts.transition(
+                        store, d.get("incident_id", ""), d.get("action", ""), actor=actor,
+                        note=d.get("note", ""), now=_dt.datetime.now().astimezone().isoformat(timespec="seconds"))
+                    payload = json.dumps(result, ensure_ascii=False, default=str).encode("utf-8")
+                    self.send_response(200 if result.get("success") else 400)
                     self.send_header("Content-Type", "application/json; charset=utf-8")
                     self.send_header("Content-Length", str(len(payload)))
                     self.end_headers()

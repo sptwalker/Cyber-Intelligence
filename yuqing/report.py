@@ -48,10 +48,10 @@ def _cite(doc_id: str) -> str:
 
 def sov(store, watch: dict) -> list[dict]:
     """竞品对标：声量份额(SOV) + 净情绪(NSR=(正-负)/总)。自有 + 竞品同口径。"""
-    rows = [dict(r) for r in store.joined()]
+    rows = [dict(r) for r in store.joined_with_entities()]
     per: dict[str, dict] = {}
     for r in rows:
-        d = per.setdefault(r["entity_id"], {"n": 0, "pos": 0, "neg": 0})
+        d = per.setdefault(r["matched_entity_id"], {"n": 0, "pos": 0, "neg": 0})
         d["n"] += 1
         d["pos"] += r["polarity"] == "pos"
         d["neg"] += r["polarity"] == "neg"
@@ -123,7 +123,13 @@ def build_report(store, watch: dict, *, run_id: str, now: str,
         parts.append(f"# {name} 舆情周报（{now[:10]}）\n")
         parts.append(f"> 数据来源：{'、'.join(watch['platforms'])}；样本 {m['n_total']} 条。"
                      f"**公开渠道抽样、非全量，仅反映相对趋势。**\n")
-        prose = _prose_claude(name, m) if use_claude else _prose_stub(name, m)
+        if use_claude:
+            try:
+                prose = _prose_claude(name, m)
+            except Exception:
+                prose = _prose_stub(name, m)  # SDK缺失/API异常不阻塞确定性报告
+        else:
+            prose = _prose_stub(name, m)
         parts.append("## 执行摘要\n" + prose + "\n")
 
         parts.append("## 核心指标\n| 指标 | 值 |\n|---|---|\n"
@@ -144,7 +150,9 @@ def build_report(store, watch: dict, *, run_id: str, now: str,
 
         degraded = store.conn.execute(
             "SELECT COUNT(*) FROM clean c JOIN features f USING(doc_id) "
-            "WHERE c.entity_id=? AND f.polarity='neg' AND f.signals LIKE '%influence_degraded%'",
+            "WHERE EXISTS(SELECT 1 FROM document_entities de "
+            "WHERE de.doc_id=c.doc_id AND de.entity_id=?) "
+            "AND f.polarity='neg' AND f.signals LIKE '%influence_degraded%'",
             (ent["id"],)).fetchone()[0]
         if degraded:
             parts.append(f"\n> 📉 可信度标注：本产品 {degraded} 条负面风险分为**影响力降级**（⚠降级）"
@@ -268,8 +276,10 @@ def push_feishu_alert_card(alerts: list[dict], *, webhook: Optional[str] = None)
         if a.get("kind") == "health":                       # 数据健康预警：无风险分/链接
             elements.append({"tag": "markdown", "content": f"**[{lvl}] 数据健康 · {plat}**\n{summ}"})
             continue
+        pending = " · 待人工确认" if a.get("status") == "pending_confirmation" else ""
+        incident = f"\n事件：`{a['incident_id']}`" if a.get("incident_id") else ""
         elements.append({"tag": "markdown",
-                         "content": f"**[{lvl}] {plat} · 风险分 {a.get('risk', '—')}**\n{summ}"})
+                         "content": f"**[{lvl}] {plat} · 风险分 {a.get('risk', '—')}{pending}**\n{summ}{incident}"})
         if a.get("url"):
             elements.append({"tag": "action", "actions": [
                 {"tag": "button",

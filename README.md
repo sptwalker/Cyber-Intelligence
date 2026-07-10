@@ -14,10 +14,13 @@
 
 ## 快速开始
 
-前置：Python 3.10+、`pip install pyyaml`；采集需本机 [opencli](https://github.com/jackwener/opencli) + 登录 weibo.com/zhihu.com。可选 `ANTHROPIC_API_KEY`（Claude 深度抽取，否则规则兜底）、`FEISHU_WEBHOOK`（推送，否则只落库）。
+前置：Python 3.10+，推荐 `pip install -e .`；Claude/语义能力可用
+`pip install -e '.[all]'` 安装可选依赖。采集需本机
+[opencli](https://github.com/jackwener/opencli) + 对应平台登录态。未安装可选 SDK 或 API 不可用时自动降级，不阻塞规则分析和确定性报告。
 
 ```bash
 python -m yuqing.selfcheck        # 端到端离线自检（无需登录/API key），exit 0 = 全链通
+python -m yuqing.architecture_check # 核心架构回归：多实体/快照/版本/告警确认门
 python -m yuqing.run              # 跑一次完整流水线：采集→分析→预警→周报→飞书
 python -m yuqing.dashboard        # 看板 → 浏览器开 http://127.0.0.1:8000
                                   #   / 详情看板 · /exec 高管概览(BHI) · /dash 中层战情室(Chart.js) · /config 配置
@@ -36,9 +39,9 @@ python -m yuqing.cli suggest       # 语义扩展：建议加入监控的新词/
 ## 架构
 
 ```
-watch.yaml → collect(opencli登录态,混合) → SQLite(raw/clean/features) 
+watch.yaml → collect(opencli登录态,混合,全部aliases) → SQLite(raw_observations/clean/document_entities)
            → analyze(规则/Claude,ABSA,证据校验) → score(线性加权风险)
-           → report(数字代码注入+引用校验,可溯源) / alerts(P0/P1分级+冷却)
+           → analysis_results(版本血缘) → report(数字注入+引用校验) / incidents(P0/P1待确认→升级)
            → 飞书 + 只读看板 ；贯穿：健康三态+静默失败熔断
 ```
 

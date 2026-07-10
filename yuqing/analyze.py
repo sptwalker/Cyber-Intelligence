@@ -161,6 +161,8 @@ def rule_extract(doc: dict, keyword_mgr=None) -> dict:
 
 HAIKU = "claude-haiku-4-5-20251001"
 SONNET = "claude-sonnet-5"
+ANALYSIS_VERSION = "opinion-v2"
+PROMPT_VERSION = "opinion-extract-v2"
 
 
 def route_model(text: str) -> str:
@@ -271,12 +273,20 @@ def analyze_pending(store, weights: Optional[Weights] = None, *, use_claude: Opt
                     now: Optional[str] = None) -> int:
     """对所有缺 features 的 clean 帖做抽取并落库。返回处理条数。"""
     weights = weights or Weights()
-    rows = store.clean_missing_features()
+    rows = store.clean_missing_features(ANALYSIS_VERSION)
     if not rows:
         return 0
     docs = [{"doc_id": r["doc_id"], "text": r["text"]} for r in rows]
 
     engine = _pick_engine(use_claude)
+    analyzed_at = now or _dt.datetime.now().astimezone().isoformat(timespec="seconds")
+    if engine == "llm":
+        models = [p for p in ("deepseek", "minimax") if llm.available(p)]
+        model_name = "+".join(models)
+    elif engine == "claude":
+        model_name = f"{HAIKU}+{SONNET}"
+    else:
+        model_name = "deterministic-rules"
 
     feats: dict[str, dict] = {}
     cls: dict[str, dict] = {}
@@ -324,7 +334,10 @@ def analyze_pending(store, weights: Optional[Weights] = None, *, use_claude: Opt
         pass
 
     for r in rows:
-        feat = feats.get(r["doc_id"]) or rule_extract(dict(r), keyword_mgr)
+        extracted = feats.get(r["doc_id"])
+        feat = extracted or rule_extract(dict(r), keyword_mgr)
+        result_engine = engine if extracted is not None else ("rule" if engine == "rule" else f"{engine}:rule_fallback")
+        result_model = model_name if extracted is not None else "deterministic-rules"
         if feat.get("polarity") not in ("pos", "neg", "neu"):   # LLM 残缺兜底：任何非法极性 → 规则
             feat = rule_extract(dict(r), keyword_mgr)
         feat = _validate_evidence(feat, r["text"] or "")
@@ -333,7 +346,8 @@ def analyze_pending(store, weights: Optional[Weights] = None, *, use_claude: Opt
         if "aspects" in feat and "aspects" not in sig:   # Claude 路径 aspects 折进 signals 落库
             sig["aspects"] = feat["aspects"]
         # 每实体危机词覆盖：命中则强制 crisis（并保证负面），确定性、引擎无关
-        extra = entity_crisis.get(r["entity_id"])
+        related_entities = store.entities_for_doc(r["doc_id"]) or [r["entity_id"]]
+        extra = [w for eid in related_entities for w in entity_crisis.get(eid, [])]
         if extra and any(w in (r["text"] or "") for w in extra):
             sig["crisis"] = True
             if feat.get("polarity") == "neu":
@@ -356,7 +370,11 @@ def analyze_pending(store, weights: Optional[Weights] = None, *, use_claude: Opt
         sig["importance"] = classify.importance_bucket(mention_equiv(merged, weights), feat["risk"])
         if feat["risk"] > 0 and influence_degraded(merged):
             sig["influence_degraded"] = True     # 风险分缺互动数据(如微博搜索)，报告须标注降级
-        store.add_feature(r["doc_id"], feat)
+        store.add_feature(
+            r["doc_id"], feat, analysis_version=ANALYSIS_VERSION,
+            engine=result_engine, model=result_model, prompt_version=PROMPT_VERSION,
+            analyzed_at=analyzed_at,
+        )
     store.commit()
     return len(rows)
 

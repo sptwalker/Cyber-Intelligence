@@ -8,6 +8,8 @@
     python -m yuqing.cli review [stats | <doc_id> <结论> [备注]]   # 人工复核队列/标注
     python -m yuqing.cli suggest                                   # 语义扩展：建议加入监控的新词/话题
     python -m yuqing.cli classify eval                             # 多维分类器留出集准确率
+    python -m yuqing.cli incidents [status]                       # 危机事件队列
+    python -m yuqing.cli incident <id> <confirm|suppress|escalate|resolve> [备注]
 """
 
 from __future__ import annotations
@@ -102,6 +104,24 @@ def main(argv: list[str]) -> int:
                     print(f"  {dim} 准确率 {res[dim]['acc']:.0%}")
                     for k, v in res[dim]["confusion"].items():
                         print(f"      {k}: {v}")
+        elif cmd == "incidents":
+            status = args[0] if args else None
+            rows = store.list_incidents(status=status)
+            print(f"事件 {len(rows)} 条" + (f"（{status}）" if status else ""))
+            for r in rows:
+                print(f"  {r['incident_id']} [{r['level']}/{r['status']}] {r['entity_id']} "
+                      f"{(r['summary'] or '')[:60]}  actor={r['actor'] or '-'}")
+        elif cmd == "incident" and len(args) >= 2:
+            from . import alerts
+            incident_id, action = args[0], args[1]
+            note = " ".join(args[2:])
+            result = alerts.transition(
+                store, incident_id, action, actor="cli",
+                note=note, now=_dt.datetime.now().astimezone().isoformat(timespec="seconds"))
+            print(result["message"] if not result.get("success") else
+                  f"事件已更新：{incident_id} → {result['incident']['status']}")
+            if not result.get("success"):
+                return 1
         else:
             print(__doc__)
             return 1

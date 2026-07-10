@@ -314,6 +314,16 @@ def demo() -> None:
     assert not dashboard._write_allowed(_mk(Host="127.0.0.1:8000", **{"Sec-Fetch-Site": "cross-site"}))
     assert not dashboard._write_allowed(_mk(Host="evil.com"))                         # DNS rebinding
     assert not dashboard._write_allowed(_mk(Host="127.0.0.1:8000", Origin="http://evil.com"))
+    _orig_auth = dashboard._require_auth
+    dashboard._require_auth = lambda _h: {"name": "分析师"}
+    try:
+        assert dashboard._mutation_allowed(
+            _mk(Host="yuqing.example.com", Origin="https://yuqing.example.com",
+                **{"Sec-Fetch-Site": "same-origin"}))                    # OAuth远程同源业务写放行
+        assert not dashboard._mutation_allowed(
+            _mk(Host="yuqing.example.com", Origin="https://evil.example.com"))  # 远程跨站拒绝
+    finally:
+        dashboard._require_auth = _orig_auth
 
     # 报告 HTML 渲染：标题/表格/链接转 HTML；XSS 转义；javascript: 链接被挡
     h = dashboard.md_to_html("# 标题\n> 提示\n\n| 平台 | 风险 |\n|---|---|\n| weibo | 5 |\n"

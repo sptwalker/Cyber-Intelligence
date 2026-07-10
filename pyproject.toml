@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cyber-intelligence-yuqing"
+version = "0.2.0"
+description = "Internal public-opinion collection, analysis and alerting system"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+claude = ["anthropic>=0.40"]
+semantic = ["numpy>=1.24"]
+all = ["anthropic>=0.40", "numpy>=1.24"]
+
+[project.scripts]
+yuqing-run = "yuqing.run:main"
+yuqing-dashboard = "yuqing.dashboard:serve"
+
+[tool.setuptools]
+packages = ["yuqing"]
+
+[tool.setuptools.package-data]
+yuqing = ["watch.yaml", "dashboard_v2.html"]

@@ -227,6 +227,8 @@ def active_sample(store, entity_id: Optional[str] = None, limit: int = 20) -> li
     if not rows:
         return []
     for r in rows:
+        if entity_id:
+            r["entity_id"] = entity_id  # 多实体关系下标注归属使用当前筛选实体，不用 legacy 首次归属
         conf = r.get("confidence")
         conf = 0.5 if conf is None else conf
         unc = 1 - conf

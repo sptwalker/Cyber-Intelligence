@@ -294,7 +294,7 @@ def collect_platform(store: Store, *, run_id: str, entity_id: str, platform: str
     # 宁可重抓不可漏；非 ISO/数字时间戳一律不参与水位，避免污染导致静默漏抓）。
     # 只有 opencli 模糊搜索适配器(weibo/zhihu/…)才易串味需强制含别名；heimao(浏览器桥，
     # 搜索已按关键词定向、extract 仅标题) 与 user-posts(定向账号) 不强求，否则会漏掉真实投诉。
-    require = (entry == "search") and bool(aliases) and (platform in OPENCLI_SITE)
+    require = entry.startswith("search") and bool(aliases) and (platform in OPENCLI_SITE)
     watermark = store.get_watermark(entity_id, platform, entry)
     max_ts = watermark or ""
     inserted = 0
@@ -310,7 +310,8 @@ def collect_platform(store: Store, *, run_id: str, entity_id: str, platform: str
         if not doc.native_id:
             continue
         n_valid += 1
-        store.add_raw(doc, it)                   # 全部留原始层审计（含被过滤的）
+        store.add_raw(doc, it, run_id=run_id, entry=entry, source_query=keyword)
+        # 全部留原始观测审计（含被过滤的）；legacy raw 仍保留首见版本兼容旧查询。
         v = relevance.judge(doc.text, aliases or [], must_not, require_alias=require)
         # 仅当"无别名"被拒 且 语义开启时，才对这一条算 embedding 语义救回（省钱：不对已命中/已过审计的算）
         if not v.relevant and v.reason == "no_alias" and sem_on:
@@ -326,17 +327,21 @@ def collect_platform(store: Store, *, run_id: str, entity_id: str, platform: str
         if v.reason.startswith("semantic"):
             n_semantic += 1
         ts = doc.publish_ts if _ISO_TS.match(doc.publish_ts) else ""
-        if watermark and ts and ts < watermark:
-            continue                             # 严格早于水位，跳过
+        if watermark and ts and ts < watermark and not store.document_exists(doc.doc_id):
+            continue                             # 旧且从未见过的结果跳过；已存在帖仍刷新互动/实体关系
         if ts > max_ts:
             max_ts = ts
-        if store.add_clean(doc):                 # True=新插入（UNIQUE 去重）
+        is_new = store.add_clean(doc)            # 已存在时刷新互动当前值并保存快照
+        store.add_entity_match(doc.doc_id, entity_id, match_reason=v.reason,
+                               source_query=keyword, observed_at=now)
+        if is_new:
             inserted += 1
     if max_ts and max_ts != watermark:
         store.set_watermark(entity_id, platform, entry, max_ts)
 
     state = health.assess(store, platform=platform, entity_id=entity_id,
-                          n_fetched=len(items), status=status)
+                          n_fetched=len(items), status=status,
+                          entry=entry, source_query=keyword)
     # 抓到了但一条都解析不出 → 多半平台字段格式变了，绝不能顶着 ok 静默丢数据
     if status == "ok" and len(items) > 0 and n_valid == 0:
         state = "suspect"
@@ -346,7 +351,8 @@ def collect_platform(store: Store, *, run_id: str, entity_id: str, platform: str
         note = (note + "；" if note else "") + f"过滤 must_not{n_mustnot}/无别名{n_noalias}(共{n_offtopic}/{n_valid})"
     if n_semantic:
         note = (note + "；" if note else "") + f"语义救回{n_semantic}(不含别名但语义相关)"
-    store.log_run(run_id, platform, entity_id, len(items), status, state, note, now)
+    store.log_run(run_id, platform, entity_id, len(items), status, state, note, now,
+                  entry=entry, source_query=keyword)
     store.commit()
     return inserted, state
 
@@ -363,20 +369,34 @@ def collect_all(store: Store, watch: dict, *, run_id: str, now: str,
     health_by_platform: dict[str, str] = {}
     for ent in watch["entities"]:
         eid = ent["id"]
-        kw = (ent.get("aliases") or [ent["id"]])[0]
-        aliases = ent.get("aliases") or []
+        aliases, _seen_aliases = [], set()
+        for alias in (ent.get("aliases") or [ent["id"]]):
+            key = (alias or "").strip().casefold()
+            if key and key not in _seen_aliases:
+                _seen_aliases.add(key)
+                aliases.append(alias.strip())
+        if not aliases:
+            aliases = [ent["id"]]
+        kw = aliases[0]
         must_not = ent.get("must_not", [])
         for platform in watch["platforms"]:
             if should_stop and should_stop():
                 return health_by_platform          # 协作式中止：停在平台边界，已采的保留
-            if on_progress:
-                on_progress(eid, platform)
             fx = (fixtures.get(platform) or {}).get(eid) if fixtures else None
-            _, state = collect_platform(store, run_id=run_id, entity_id=eid, platform=platform,
-                                        keyword=kw, now=now, fixture=fx,
-                                        aliases=aliases, must_not=must_not)
-            # 一个平台多实体时取最差态
-            health_by_platform[platform] = health.worst(health_by_platform.get(platform), state)
+            # 线上每个 alias 都是真实搜索种子；fixture 代表平台聚合样本，只跑一次避免自检触网/重复。
+            queries = [kw] if fx is not None else aliases
+            for query in queries:
+                if should_stop and should_stop():
+                    return health_by_platform
+                if on_progress:
+                    on_progress(eid, platform)
+                query_fixture = fx.get(query) if isinstance(fx, dict) else fx
+                _, state = collect_platform(
+                    store, run_id=run_id, entity_id=eid, platform=platform,
+                    keyword=query, now=now, fixture=query_fixture,
+                    entry=f"search:{query}", aliases=aliases, must_not=must_not)
+                # 一个平台多实体/多搜索词时取最差态
+                health_by_platform[platform] = health.worst(health_by_platform.get(platform), state)
         if should_stop and should_stop():
             return health_by_platform
         # user-posts 入口：跟踪指定 KOL/官号（track_users: ["weibo:12345", ...]）

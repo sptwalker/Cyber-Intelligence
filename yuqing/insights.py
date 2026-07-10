@@ -15,10 +15,16 @@ from typing import Optional
 
 
 def _self_rows(store, self_entities: Optional[set] = None) -> list[dict]:
-    rows = [dict(r) for r in store.joined()]
-    if self_entities is not None:
-        rows = [r for r in rows if r["entity_id"] in self_entities]
-    return rows
+    if self_entities is None:
+        return [dict(r) for r in store.joined()]
+    # 一个帖子可匹配多个自有实体；全局日报按 doc 去重，但不能依赖 legacy clean.entity_id。
+    by_doc: dict[str, dict] = {}
+    for entity_id in self_entities:
+        for row in store.joined(entity_id):
+            item = dict(row)
+            item["entity_id"] = entity_id
+            by_doc.setdefault(item["doc_id"], item)
+    return list(by_doc.values())
 
 
 # --- 老板一句话日报（确定性，无需 LLM，可直接推 IM）---
@@ -140,7 +146,8 @@ def ask(store, question: str, *, use_claude: Optional[bool] = None) -> dict:
     hits = retrieve(store, question)
     sources = [h["doc_id"] for h in hits]
     if use_claude is None:
-        use_claude = bool(os.getenv("ANTHROPIC_API_KEY"))
+        from . import config
+        use_claude = bool(config.resolve("ANTHROPIC_API_KEY"))
     if not hits:
         return {"answer": "未检索到相关舆情。", "sources": []}
     if not use_claude:
@@ -150,15 +157,23 @@ def ask(store, question: str, *, use_claude: Optional[bool] = None) -> dict:
         return {"answer": f"检索到 {len(hits)} 条相关，其中负面 {neg} 条。"
                           f"最相关：{top['platform']}「{(top['summary'] or top['text'] or '')[:30]}」{tag}"
                           f"[来源:{top['doc_id']}]。", "sources": sources}
-    import anthropic
-    ctx = json.dumps([{"doc_id": h["doc_id"], "platform": h["platform"],
-                       "text": (h["text"] or "")[:200]} for h in hits], ensure_ascii=False)
-    system = ("基于给定舆情片段回答，禁止编造；每个结论标 [来源:doc_id]，doc_id 只能取自片段。"
-              "无充分依据答'证据不足'。")
-    msg = anthropic.Anthropic().messages.create(
-        model="claude-sonnet-5", max_tokens=800, system=system,
-        messages=[{"role": "user", "content": f"问题：{question}\n\n片段：{ctx}"}])
-    return {"answer": "".join(b.text for b in msg.content if b.type == "text"), "sources": sources}
+    try:
+        import anthropic
+        ctx = json.dumps([{"doc_id": h["doc_id"], "platform": h["platform"],
+                           "text": (h["text"] or "")[:200]} for h in hits], ensure_ascii=False)
+        system = ("基于给定舆情片段回答，禁止编造；每个结论标 [来源:doc_id]，doc_id 只能取自片段。"
+                  "无充分依据答'证据不足'。")
+        msg = anthropic.Anthropic().messages.create(
+            model="claude-sonnet-5", max_tokens=800, system=system,
+            messages=[{"role": "user", "content": f"问题：{question}\n\n片段：{ctx}"}])
+        return {"answer": "".join(b.text for b in msg.content if b.type == "text"), "sources": sources}
+    except Exception:
+        # 配了 key 但 SDK/API 不可用时，仍返回可溯源的确定性摘要。
+        neg = sum(h["polarity"] == "neg" for h in hits)
+        top = hits[0]
+        return {"answer": f"检索到 {len(hits)} 条相关，其中负面 {neg} 条。"
+                          f"最相关：{top['platform']}「{(top['summary'] or top['text'] or '')[:30]}」"
+                          f"[来源:{top['doc_id']}]。", "sources": sources}
 
 
 # --- 诉求→产品需求闭环（半自动，产建议清单供人工确认，不自动建工单）---
