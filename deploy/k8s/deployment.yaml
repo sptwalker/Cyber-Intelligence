@@ -40,6 +40,21 @@ spec:
           env:
             - name: TZ
               value: Asia/Shanghai
+            - name: FEISHU_APP_ID
+              valueFrom:
+                secretKeyRef:
+                  name: cyber-intelligence-secrets
+                  key: FEISHU_APP_ID
+            - name: FEISHU_APP_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: cyber-intelligence-secrets
+                  key: FEISHU_APP_SECRET
+            - name: FEISHU_REDIRECT_URI
+              valueFrom:
+                secretKeyRef:
+                  name: cyber-intelligence-secrets
+                  key: FEISHU_REDIRECT_URI
           readinessProbe:
             httpGet:
               path: /auth/login
