@@ -1,0 +1,82 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cyber-intelligence
+  namespace: nexus-prod
+  labels:
+    app.kubernetes.io/name: cyber-intelligence
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cyber-intelligence
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cyber-intelligence
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      imagePullSecrets:
+        - name: swr-registry
+      containers:
+        - name: cyber-intelligence
+          image: swr.cn-south-1.myhuaweicloud.com/nexus-studio/cyber-intelligence:prod-latest
+          imagePullPolicy: Always
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: TZ
+              value: Asia/Shanghai
+          readinessProbe:
+            httpGet:
+              path: /auth/login
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /auth/login
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cyber-intelligence
+  namespace: nexus-prod
+  labels:
+    app.kubernetes.io/name: cyber-intelligence
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: cyber-intelligence
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP

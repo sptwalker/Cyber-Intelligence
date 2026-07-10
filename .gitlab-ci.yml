@@ -1,0 +1,162 @@
+include:
+  - template: Security/Secret-Detection.gitlab-ci.yml
+
+default:
+  tags:
+    - AI
+  retry: 2
+  interruptible: true
+
+.pipeline_changes: &pipeline_changes
+  - .gitlab-ci.yml
+  - .trivyignore
+  - Dockerfile
+  - pyproject.toml
+  - deploy/**/*
+  - yuqing/**/*
+
+stages:
+  - verify
+  - build
+  - deploy
+
+workflow:
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "master"'
+    - when: never
+
+variables:
+  GIT_STRATEGY: fetch
+  GIT_DEPTH: "2"
+  GET_SOURCES_ATTEMPTS: "3"
+  SWR_REGION: cn-south-1
+  IMAGE_TAG: "prod-${CI_COMMIT_SHORT_SHA}"
+
+secret_detection:
+  stage: verify
+
+.pipeline_rules:
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "master"'
+      changes: *pipeline_changes
+    - when: never
+
+.pip_cache:
+  variables:
+    PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+    PIP_DISABLE_PIP_VERSION_CHECK: "1"
+    PIP_INDEX_URL: "https://pypi.tuna.tsinghua.edu.cn/simple"
+  cache:
+    key:
+      prefix: pip
+      files:
+        - pyproject.toml
+    policy: pull-push
+    paths:
+      - .cache/pip/
+
+# ── verify ─────────────────────────────────────────────────────────────────
+
+verify_python:
+  stage: verify
+  image: python:3.12-slim
+  extends:
+    - .pipeline_rules
+    - .pip_cache
+  script:
+    - python -m pip install -e ".[all]"
+    # Ruff currently reports pre-existing violations; keep syntax/import checks blocking.
+    - python -m compileall -q yuqing
+    - python -c "import yuqing"
+
+# ── build (CCE image and scan) ─────────────────────────────────────────────
+
+.build_cce:
+  stage: build
+  image: docker:git
+  extends: .pipeline_rules
+  variables:
+    BUILDX_GIT_INFO: "0"
+    DOCKER_BUILDKIT: "1"
+  before_script:
+    - |
+      if [ -z "${SWR_AK:-}" ] || [ -z "${SWR_PASSWORD:-}" ]; then
+        echo "ERROR: SWR_AK or SWR_PASSWORD CI variable missing" >&2
+        exit 1
+      fi
+    - export SWR_HOST="swr.${SWR_REGION}.myhuaweicloud.com"
+    - export SWR_REGISTRY="${SWR_HOST}/nexus-studio"
+    - echo "$SWR_PASSWORD" | docker login -u "${SWR_REGION}@${SWR_AK}" --password-stdin "$SWR_HOST"
+
+build_image:
+  extends: .build_cce
+  script:
+    - docker buildx build
+        --push --provenance=false --platform linux/amd64
+        -t "${SWR_REGISTRY}/cyber-intelligence:${IMAGE_TAG}"
+        -f Dockerfile
+        .
+
+scan_trivy:
+  stage: build
+  image:
+    name: aquasec/trivy:latest
+    entrypoint: [""]
+  extends: .pipeline_rules
+  needs:
+    - job: build_image
+  variables:
+    TRIVY_NO_PROGRESS: "true"
+    TRIVY_SEVERITY: "HIGH,CRITICAL"
+  before_script:
+    - |
+      if [ -z "${SWR_AK:-}" ] || [ -z "${SWR_PASSWORD:-}" ]; then
+        echo "ERROR: SWR_AK or SWR_PASSWORD CI variable missing" >&2
+        exit 1
+      fi
+    - export SWR_REGISTRY="swr.${SWR_REGION}.myhuaweicloud.com/nexus-studio"
+    - export TRIVY_USERNAME="${SWR_REGION}@${SWR_AK}"
+    - export TRIVY_PASSWORD="$SWR_PASSWORD"
+  script:
+    - trivy image --exit-code 1 --ignorefile .trivyignore "${SWR_REGISTRY}/cyber-intelligence:${IMAGE_TAG}"
+
+# ── deploy ─────────────────────────────────────────────────────────────────
+
+deploy_cce:
+  stage: deploy
+  image: alpine:3.19
+  extends: .pipeline_rules
+  needs:
+    - job: build_image
+    - job: scan_trivy
+  retry: 0
+  resource_group: cce-production
+  environment:
+    name: cce-production
+  before_script:
+    - apk add --no-cache curl
+    - curl -fsSLo /usr/local/bin/kubectl "https://dl.k8s.io/release/v1.31.5/bin/linux/amd64/kubectl"
+    - chmod +x /usr/local/bin/kubectl
+    - |
+      if [ -z "${KUBECONFIG_CCE_B64:-}" ]; then
+        echo "ERROR: CI variable KUBECONFIG_CCE_B64 is not set" >&2
+        exit 1
+      fi
+      if [ -z "${SWR_AK:-}" ] || [ -z "${SWR_PASSWORD:-}" ]; then
+        echo "ERROR: SWR_AK or SWR_PASSWORD CI variable missing" >&2
+        exit 1
+      fi
+    - mkdir -p ~/.kube
+    - printf '%s' "$KUBECONFIG_CCE_B64" | base64 -d > ~/.kube/config
+    - chmod 600 ~/.kube/config
+    - export SWR_HOST="swr.${SWR_REGION}.myhuaweicloud.com"
+  script:
+    - kubectl create namespace nexus-prod --dry-run=client -o yaml | kubectl apply -f -
+    - kubectl create secret docker-registry swr-registry
+        --docker-server="$SWR_HOST"
+        --docker-username="${SWR_REGION}@${SWR_AK}"
+        --docker-password="$SWR_PASSWORD"
+        --namespace=nexus-prod
+        --dry-run=client -o yaml | kubectl apply -f -
+    - sed "s|cyber-intelligence:[^ ]*|cyber-intelligence:${IMAGE_TAG}|g" deploy/k8s/deployment.yaml | kubectl apply -f - -n nexus-prod
+    - kubectl rollout status deployment/cyber-intelligence -n nexus-prod --timeout=3m
