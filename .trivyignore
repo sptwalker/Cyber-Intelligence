@@ -1,14 +1,25 @@
-# Trivy ignore — nginx package CVEs pending Alpine 3.23 stable inclusion
-# Fixed versions (r2/r3/r4) exist but are only in Alpine edge, not yet backported
-# to the stable channel used by nginx:1.28-alpine. Re-evaluate when nginx:1.28-alpine
-# ships with a base that includes the fix (monitor: https://pkgs.alpinelinux.org/package/v3.23/main/x86_64/nginx)
-# Expiry: 2026-10-01
+# Trivy ignore — Debian bookworm (python:3.12-slim) system library CVEs
+# All entries below have status fix_deferred or affected in Debian stable;
+# no fixed version is available in bookworm. Re-evaluate on each base image upgrade.
+# Expiry: 2027-01-01
 
-# CVE-2026-9256: ngx_http_rewrite_module code execution/DoS — fixed=1.28.3-r2
-CVE-2026-9256
+# util-linux / libblkid1 / libuuid1 / libsmartcols1 / bsdutils / mount / login
+# CVE-2026-53615: Integer Overflow in libblkid/src/partitions/dos.c — fix_deferred
+CVE-2026-53615
 
-# CVE-2026-49975: HTTP/2 compression bomb DoS — fixed=1.28.3-r3
-CVE-2026-49975
+# gzip — CVE-2026-41992: Global buffer overflow — no fix in bookworm
+CVE-2026-41992
 
-# CVE-2026-42055: Arbitrary code execution or DoS — fixed=1.28.3-r4
-CVE-2026-42055
+# libacl1 — CVE-2026-54369: Symlink traversal privilege escalation — affected
+CVE-2026-54369
+
+# ncurses (libncursesw6 / libtinfo6 / ncurses-base / ncurses-bin)
+# CVE-2025-69720: Buffer overflow vulnerability — fix_deferred
+CVE-2025-69720
+
+# perl-base — multiple CVEs, fix_deferred or affected in Debian bookworm stable
+CVE-2026-42496
+CVE-2026-8376
+CVE-2026-42497
+CVE-2026-48962
+CVE-2026-9538
