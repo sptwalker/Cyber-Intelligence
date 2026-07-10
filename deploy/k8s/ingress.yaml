@@ -1,0 +1,25 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: cyber-intelligence
+  namespace: nexus-prod
+  labels:
+    app.kubernetes.io/name: cyber-intelligence
+  annotations:
+    kubernetes.io/elb.class: performance
+    kubernetes.io/elb.id: "abab7533-a1c6-4138-a4bc-59d53e3446e2"
+    kubernetes.io/elb.listen-ports: '[{"HTTP":80},{"HTTPS":443}]'
+    kubernetes.io/elb.tls-certificate-ids: "56de20421757445ea53f5af51ecb4e10"
+spec:
+  ingressClassName: cce
+  rules:
+    - host: "cyber.youdoogo.com"
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: cyber-intelligence
+                port:
+                  number: 8080

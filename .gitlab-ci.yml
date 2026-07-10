@@ -159,4 +159,5 @@ deploy_cce:
         --namespace=nexus-prod
         --dry-run=client -o yaml | kubectl apply -f -
     - sed "s|cyber-intelligence:[^ ]*|cyber-intelligence:${IMAGE_TAG}|g" deploy/k8s/deployment.yaml | kubectl apply -f - -n nexus-prod
+    - kubectl apply -f deploy/k8s/ingress.yaml -n nexus-prod
     - kubectl rollout status deployment/cyber-intelligence -n nexus-prod --timeout=3m
