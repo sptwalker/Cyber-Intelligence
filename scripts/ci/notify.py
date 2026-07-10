@@ -22,8 +22,8 @@ def _completed_at() -> str:
 def _card_header(mode: str) -> tuple[str, str]:
     pid = _env("CI_PIPELINE_ID")
     if mode == "success":
-        return f"✅ Cyber-Intelligence CCE 部署成功 #{pid}", "green"
-    return f"❌ Cyber-Intelligence CCE 部署失败 #{pid}", "red"
+        return f"✅ Cyber 部署成功 #{pid}", "green"
+    return f"❌ Cyber 部署失败 #{pid}", "red"
 
 
 def _card_content() -> str:
