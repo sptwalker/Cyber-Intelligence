@@ -1279,21 +1279,85 @@ def _write_allowed(handler) -> bool:
     return True
 
 
+def _normalized_origin(value: str, *, allow_path: bool = False) -> tuple[str, str, int] | None:
+    """把 http(s) URL 规范为 (scheme, host, port)，非法值返回 None。"""
+    try:
+        p = urlparse((value or "").strip())
+        if p.scheme.lower() not in ("http", "https") or not p.hostname:
+            return None
+        if p.username is not None or p.password is not None or p.params or p.query or p.fragment:
+            return None
+        if not allow_path and p.path not in ("", "/"):
+            return None
+        scheme = p.scheme.lower()
+        port = p.port or (443 if scheme == "https" else 80)
+    except ValueError:
+        return None
+    return scheme, p.hostname.rstrip(".").lower(), port
+
+
+def _forwarded_origin(handler, request_origin: tuple[str, str, int]) -> tuple[str, str, int] | None:
+    """读取代理提供的公开 origin；没有完整信息时返回 None。
+
+    X-Forwarded-* 可能是逗号分隔的代理链，第一个值是客户端最初访问的公开端点。
+    这些值只作为代理一致性校验；配置了 OAuth 回调时，最终信任锚仍是该回调地址。
+    """
+    h = handler.headers
+    host = (h.get("X-Forwarded-Host") or "").split(",", 1)[0].strip()
+    if not host:
+        return None
+    proto = (h.get("X-Forwarded-Proto") or "").split(",", 1)[0].strip().lower()
+    if not proto:
+        proto = request_origin[0]
+    port = (h.get("X-Forwarded-Port") or "").split(",", 1)[0].strip()
+    if port and ":" not in host:
+        host = f"{host}:{port}"
+    return _normalized_origin(f"{proto}://{host}")
+
+
+def _configured_oauth_origin() -> tuple[str, str, int] | None:
+    """OAuth 回调地址是远程站点公开 origin 的受信配置来源。"""
+    try:
+        from . import config
+        return _normalized_origin(config.resolve("FEISHU_REDIRECT_URI"), allow_path=True)
+    except Exception:
+        return None
+
+
 def _mutation_allowed(handler) -> bool:
-    """业务写接口：本机请求沿用旧保护；远程请求必须 OAuth 登录且同源。"""
+    """业务写接口：本机沿用旧保护；远程必须 OAuth 登录且公开 origin 同源。"""
     if _write_allowed(handler):
         return True
     if _require_auth(handler) is None:
         return False
     h = handler.headers
-    sfs = h.get("Sec-Fetch-Site")
+    sfs = (h.get("Sec-Fetch-Site") or "").lower()
     if sfs and sfs not in ("same-origin", "none"):
         return False
-    host = (h.get("Host") or "").split(":")[0].lower()
-    origin = h.get("Origin")
-    if origin and (urlparse(origin).hostname or "").lower() != host:
+
+    # 浏览器同源 POST/fetch 会带 Origin。远程写操作不接受缺失/畸形 Origin，
+    # 避免仅凭可伪造的 Host 或缺失 Sec-Fetch-Site 就绕过 CSRF 校验。
+    origin = _normalized_origin(h.get("Origin") or "")
+    if origin is None:
         return False
-    return bool(host)
+
+    # TLS 常在 Ingress/ELB 终止，后端 Host 可能已被改成 service:port；不能把它
+    # 与浏览器看到的公开 Origin 直接比较。优先以 OAuth 回调地址作为可信公开
+    # origin，并在代理明确提供 X-Forwarded-Host 时校验二者一致。
+    configured = _configured_oauth_origin()
+    forwarded = _forwarded_origin(handler, origin)
+    has_forwarded_host = bool(h.get("X-Forwarded-Host"))
+    if configured is not None:
+        if origin != configured or (has_forwarded_host and forwarded != configured):
+            return False
+        return True
+
+    # 无回调配置时保留可测试/直连部署能力：有代理头则与公开代理端点比；否则
+    # 用 Origin 的 scheme 加原始 Host 严格比较 scheme/host/port。
+    if forwarded is not None:
+        return origin == forwarded
+    host = (h.get("Host") or "").strip()
+    return origin == _normalized_origin(f"{origin[0]}://{host}")
 
 
 def make_handler(db: str):
