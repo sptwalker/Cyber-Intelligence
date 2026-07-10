@@ -55,6 +55,13 @@ spec:
                 secretKeyRef:
                   name: cyber-intelligence-secrets
                   key: FEISHU_REDIRECT_URI
+          command:
+            - python
+            - -c
+            - "from yuqing.dashboard import serve; serve(db='/data/yuqing.db', host='0.0.0.0', port=8080)"
+          volumeMounts:
+            - name: data
+              mountPath: /data
           readinessProbe:
             httpGet:
               path: /auth/login
@@ -78,6 +85,25 @@ spec:
             limits:
               cpu: 500m
               memory: 512Mi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: cyber-intelligence-data
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: cyber-intelligence-data
+  namespace: nexus-prod
+  labels:
+    app.kubernetes.io/name: cyber-intelligence
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: csi-disk
+  resources:
+    requests:
+      storage: 5Gi
 ---
 apiVersion: v1
 kind: Service

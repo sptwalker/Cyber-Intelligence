@@ -68,13 +68,77 @@ def _do_run(db: str) -> None:
 
 # ---- 飞书 OAuth 网页登录（stdlib 实现，零新依赖）----------------------------------
 # 员工用企业飞书身份扫码/点击授权即可访问看板，替代 Nginx Basic Auth。
-# session 只存内存（Phase 1 够用，进程重启后重新登录），不落库、不建新表。
+# session 持久化到 SQLite（与 yuqing.db 同库），Pod 重启后无需重新登录。
 SESSION_COOKIE = "yuqing_sid"          # 会话 cookie 名
-SESSION_TTL = 7 * 24 * 3600            # 会话有效期 7 天（存 created_at 做 TTL 检查）
+SESSION_TTL = 7 * 24 * 3600            # 会话有效期 7 天
 _STATE_TTL = 600                       # OAuth state 有效期 10 分钟（防 CSRF + 记原始路径）
 _FEISHU_BASE = "https://open.feishu.cn"
-sessions: dict[str, dict] = {}         # sid -> {"user": {open_id,name,avatar_url}, "created_at": ts}
 _oauth_states: dict[str, dict] = {}    # state -> {"next": 原始路径, "created_at": ts}
+
+# ---- session SQLite 持久层（线程安全：每次调用独立连接，与业务 Store 相同模式）----
+_SESSION_DB: str = ""   # 由 serve() 初始化为 db 路径
+
+
+def _session_init(db_path: str) -> None:
+    """建 sessions 表（首次启动时）。"""
+    import sqlite3
+    con = sqlite3.connect(db_path)
+    try:
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS yuqing_sessions (
+                sid TEXT PRIMARY KEY,
+                open_id TEXT NOT NULL,
+                name TEXT NOT NULL DEFAULT '',
+                avatar_url TEXT NOT NULL DEFAULT '',
+                created_at REAL NOT NULL
+            )
+        """)
+        con.commit()
+    finally:
+        con.close()
+
+
+def _session_save(sid: str, user: dict) -> None:
+    import sqlite3
+    con = sqlite3.connect(_SESSION_DB)
+    try:
+        con.execute(
+            "INSERT OR REPLACE INTO yuqing_sessions(sid,open_id,name,avatar_url,created_at)"
+            " VALUES(?,?,?,?,?)",
+            (sid, user.get("open_id", ""), user.get("name", ""),
+             user.get("avatar_url", ""), time.time())
+        )
+        con.commit()
+    finally:
+        con.close()
+
+
+def _session_load(sid: str) -> dict | None:
+    import sqlite3
+    con = sqlite3.connect(_SESSION_DB)
+    try:
+        row = con.execute(
+            "SELECT open_id,name,avatar_url,created_at FROM yuqing_sessions WHERE sid=?", (sid,)
+        ).fetchone()
+    finally:
+        con.close()
+    if not row:
+        return None
+    open_id, name, avatar_url, created_at = row
+    if time.time() - created_at > SESSION_TTL:
+        _session_delete(sid)
+        return None
+    return {"open_id": open_id, "name": name, "avatar_url": avatar_url}
+
+
+def _session_delete(sid: str) -> None:
+    import sqlite3
+    con = sqlite3.connect(_SESSION_DB)
+    try:
+        con.execute("DELETE FROM yuqing_sessions WHERE sid=?", (sid,))
+        con.commit()
+    finally:
+        con.close()
 
 _CSS = """
 body{font:14px/1.5 -apple-system,Segoe UI,Microsoft YaHei,sans-serif;max-width:1000px;margin:24px auto;padding:0 16px;color:#1f2328}
@@ -1053,21 +1117,15 @@ def render_config(*, saved: bool = False, test_msg: str = "") -> str:
 # ---- 飞书 OAuth：会话管理 + 飞书 API 调用（全部走 urllib，无第三方依赖）------------
 
 def _new_session(user: dict) -> str:
-    """建会话：随机 sid（secrets.token_urlsafe(32)），记 user_info + created_at。返回 sid。"""
+    """建会话：随机 sid（secrets.token_urlsafe(32)），持久化到 SQLite。返回 sid。"""
     sid = secrets.token_urlsafe(32)
-    sessions[sid] = {"user": user, "created_at": time.time()}
+    _session_save(sid, user)
     return sid
 
 
 def _get_session(sid: str) -> dict | None:
     """按 sid 取有效会话的 user_info；超 7 天则清理并返回 None（TTL 检查）。"""
-    sess = sessions.get(sid)
-    if not sess:
-        return None
-    if time.time() - sess["created_at"] > SESSION_TTL:
-        sessions.pop(sid, None)                       # 惰性清理过期会话
-        return None
-    return sess["user"]
+    return _session_load(sid)
 
 
 def _sid_from_cookie(handler) -> str:
@@ -1290,7 +1348,7 @@ def make_handler(db: str):
             """/auth/logout：清会话 + 过期 cookie → 302 回登录页。"""
             sid = _sid_from_cookie(self)
             if sid:
-                sessions.pop(sid, None)
+                _session_delete(sid)
             self._redirect("/auth/login", _cookie_header("", clear=True))
 
         def do_GET(self):
@@ -1756,6 +1814,9 @@ def _run_test(provider: str) -> str:
 
 
 def serve(db: str = "yuqing.db", host: str = "127.0.0.1", port: int = 8000) -> None:
+    global _SESSION_DB
+    _SESSION_DB = db
+    _session_init(db)
     print(f"看板已启动（只读）：http://{host}:{port}  （Ctrl+C 停止）")
     # ThreadingHTTPServer: 每请求独立线程，慢接口（heimao 浏览器探测/跑批）不阻塞整站。
     # 每请求自建/关 SQLite 连接（见 do_GET），不跨线程共享，故线程安全。
