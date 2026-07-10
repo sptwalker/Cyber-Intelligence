@@ -15,6 +15,10 @@ from pathlib import Path
 # 设置页暴露的字段： (key, 标签, 是否密钥需脱敏)
 FIELDS = [
     ("FEISHU_WEBHOOK", "飞书机器人 Webhook", True),
+    # 飞书 OAuth 网页登录（企业应用身份）：App ID/回调地址明文可显，App Secret 脱敏。
+    ("FEISHU_APP_ID", "飞书应用 App ID", False),
+    ("FEISHU_APP_SECRET", "飞书应用 App Secret", True),
+    ("FEISHU_REDIRECT_URI", "飞书回调地址（如 https://yuqing.corp.example.com/auth/callback）", False),
     ("DEEPSEEK_API_KEY", "DeepSeek API Key", True),
     ("DEEPSEEK_BASE_URL", "DeepSeek Base URL（留空=官方默认）", False),
     ("DEEPSEEK_MODEL", "DeepSeek 模型（留空=deepseek-chat）", False),

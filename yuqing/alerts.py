@@ -11,7 +11,7 @@ import datetime as _dt
 import json
 from typing import Optional
 
-from .report import push_feishu
+from .report import push_feishu_alert_card
 from .store import Store
 
 P0_RISK = 100.0        # 大V危机负面量级
@@ -94,7 +94,7 @@ def dispatch(store: Store, *, now: str, health_by_platform: Optional[dict] = Non
                       self_entities=self_entities)
     store.commit()
     if alerts:
-        push_feishu(format_card(alerts), webhook, title="舆情实时预警")
+        push_feishu_alert_card(alerts, webhook=webhook)   # 升级为飞书卡片（P0红/P1橙）
     return alerts
 
 

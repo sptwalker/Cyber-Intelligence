@@ -15,8 +15,12 @@ import threading
 import io
 import contextlib
 import datetime as _dt
+import secrets
+import time
+import urllib.request
+from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, urlencode, quote
 
 from .store import Store
 
@@ -61,6 +65,16 @@ def _do_run(db: str) -> None:
         _run_state["current"] = ""
         _run_state["stop"] = False
         _run_state["running"] = False
+
+# ---- 飞书 OAuth 网页登录（stdlib 实现，零新依赖）----------------------------------
+# 员工用企业飞书身份扫码/点击授权即可访问看板，替代 Nginx Basic Auth。
+# session 只存内存（Phase 1 够用，进程重启后重新登录），不落库、不建新表。
+SESSION_COOKIE = "yuqing_sid"          # 会话 cookie 名
+SESSION_TTL = 7 * 24 * 3600            # 会话有效期 7 天（存 created_at 做 TTL 检查）
+_STATE_TTL = 600                       # OAuth state 有效期 10 分钟（防 CSRF + 记原始路径）
+_FEISHU_BASE = "https://open.feishu.cn"
+sessions: dict[str, dict] = {}         # sid -> {"user": {open_id,name,avatar_url}, "created_at": ts}
+_oauth_states: dict[str, dict] = {}    # state -> {"next": 原始路径, "created_at": ts}
 
 _CSS = """
 body{font:14px/1.5 -apple-system,Segoe UI,Microsoft YaHei,sans-serif;max-width:1000px;margin:24px auto;padding:0 16px;color:#1f2328}
@@ -1032,6 +1046,149 @@ def render_config(*, saved: bool = False, test_msg: str = "") -> str:
     return _page("系统配置", body)
 
 
+# ---- 飞书 OAuth：会话管理 + 飞书 API 调用（全部走 urllib，无第三方依赖）------------
+
+def _new_session(user: dict) -> str:
+    """建会话：随机 sid（secrets.token_urlsafe(32)），记 user_info + created_at。返回 sid。"""
+    sid = secrets.token_urlsafe(32)
+    sessions[sid] = {"user": user, "created_at": time.time()}
+    return sid
+
+
+def _get_session(sid: str) -> dict | None:
+    """按 sid 取有效会话的 user_info；超 7 天则清理并返回 None（TTL 检查）。"""
+    sess = sessions.get(sid)
+    if not sess:
+        return None
+    if time.time() - sess["created_at"] > SESSION_TTL:
+        sessions.pop(sid, None)                       # 惰性清理过期会话
+        return None
+    return sess["user"]
+
+
+def _sid_from_cookie(handler) -> str:
+    """从请求 Cookie 头解析 yuqing_sid（缺失/畸形返回空串）。"""
+    raw = handler.headers.get("Cookie")
+    if not raw:
+        return ""
+    jar = SimpleCookie()
+    try:
+        jar.load(raw)
+    except Exception:
+        return ""
+    m = jar.get(SESSION_COOKIE)
+    return m.value if m else ""
+
+
+def _require_auth(handler) -> dict | None:
+    """从 Cookie 读 sid，验证 session 有效。返回 user_info dict（含 name/open_id）或 None（未登录）。"""
+    sid = _sid_from_cookie(handler)
+    return _get_session(sid) if sid else None
+
+
+def _cookie_header(sid: str, *, clear: bool = False) -> str:
+    """构造 Set-Cookie：HttpOnly + SameSite=Lax + Path=/。clear=True 时立即过期以登出。"""
+    parts = [f"{SESSION_COOKIE}={'' if clear else sid}", "Path=/", "HttpOnly", "SameSite=Lax"]
+    parts.append("Max-Age=0" if clear else f"Max-Age={SESSION_TTL}")
+    return "; ".join(parts)
+
+
+def _safe_next(nxt: str) -> str:
+    """防开放重定向：next 仅接受本站绝对路径（/ 开头且非 //），否则回首页。"""
+    return nxt if (nxt.startswith("/") and not nxt.startswith("//")) else "/"
+
+
+def _new_state(next_path: str) -> str:
+    """生成一次性 OAuth state（防 CSRF）并记住登录后要跳回的原始路径；顺带清理过期 state。"""
+    now = time.time()
+    for k in [k for k, v in _oauth_states.items() if now - v["created_at"] > _STATE_TTL]:
+        _oauth_states.pop(k, None)
+    state = secrets.token_urlsafe(16)
+    _oauth_states[state] = {"next": _safe_next(next_path), "created_at": now}
+    return state
+
+
+def _feishu_app_access_token() -> str:
+    """取 app_access_token（自建应用），用于给 code 换 user_token 时的 Bearer 鉴权。
+
+    飞书 API：POST /open-apis/auth/v3/app_access_token/internal  body: {app_id, app_secret}
+    """
+    from . import config
+    payload = {"app_id": config.resolve("FEISHU_APP_ID"),
+               "app_secret": config.resolve("FEISHU_APP_SECRET")}
+    req = urllib.request.Request(
+        f"{_FEISHU_BASE}/open-apis/auth/v3/app_access_token/internal",
+        data=json.dumps(payload).encode(), headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        r = json.loads(resp.read().decode("utf-8"))
+    if r.get("code") != 0:
+        raise RuntimeError(f"app_access_token 失败：{r.get('msg') or r}")
+    return r["app_access_token"]
+
+
+def _feishu_user_access_token(code: str) -> str:
+    """用授权码换 user_access_token。
+
+    飞书 API：POST /open-apis/authen/v1/oidc/access_token
+      Header: Authorization: Bearer <app_access_token>
+      body:   {grant_type: "authorization_code", code}
+    """
+    app_token = _feishu_app_access_token()
+    req = urllib.request.Request(
+        f"{_FEISHU_BASE}/open-apis/authen/v1/oidc/access_token",
+        data=json.dumps({"grant_type": "authorization_code", "code": code}).encode(),
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {app_token}"})
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        r = json.loads(resp.read().decode("utf-8"))
+    if r.get("code") != 0:
+        raise RuntimeError(f"换取 user_access_token 失败：{r.get('msg') or r}")
+    return r["data"]["access_token"]
+
+
+def _feishu_user_info(user_access_token: str) -> dict:
+    """用 user_access_token 取登录用户信息，精简为 {open_id, name, avatar_url}。
+
+    飞书 API：GET /open-apis/authen/v1/user_info  Header: Authorization: Bearer <user_access_token>
+    """
+    req = urllib.request.Request(
+        f"{_FEISHU_BASE}/open-apis/authen/v1/user_info",
+        headers={"Authorization": f"Bearer {user_access_token}"})
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        r = json.loads(resp.read().decode("utf-8"))
+    if r.get("code") != 0:
+        raise RuntimeError(f"获取用户信息失败：{r.get('msg') or r}")
+    d = r.get("data") or {}
+    return {"open_id": d.get("open_id", ""), "name": d.get("name", ""),
+            "avatar_url": d.get("avatar_url", "")}
+
+
+def _feishu_authorize_url(app_id: str, redirect_uri: str, state: str) -> str:
+    """拼飞书授权页 URL（用户在此扫码/点击授权）。
+
+    飞书 API：GET /open-apis/authen/v1/authorize?app_id&redirect_uri&scope&state
+    """
+    q = urlencode({"app_id": app_id, "redirect_uri": redirect_uri,
+                   "scope": "contact:user.base:readonly", "state": state})
+    return f"{_FEISHU_BASE}/open-apis/authen/v1/authorize?{q}"
+
+
+def render_auth_hint() -> str:
+    """飞书应用未配置时的友好提示页（DoD#3：不 500）。"""
+    body = ("<h1>飞书登录未配置</h1>"
+            "<p>本看板通过飞书企业应用登录。管理员尚未配置飞书应用凭据，暂时无法登录。</p>"
+            "<p>请在<strong>本机</strong>打开 <a href='/config'>⚙️ 系统配置</a>，填写 "
+            "<b>飞书应用 App ID</b> / <b>App Secret</b> / <b>回调地址</b> 后重试。</p>"
+            "<p class=muted>对应配置项：FEISHU_APP_ID · FEISHU_APP_SECRET · FEISHU_REDIRECT_URI</p>")
+    return _page("飞书登录未配置", body)
+
+
+def render_auth_error(msg: str) -> str:
+    """飞书登录流程出错时的友好提示页（不 500）。"""
+    body = (f"<h1>登录失败</h1><p>{html.escape(msg)}</p>"
+            "<p><a href='/auth/login'>← 重新登录</a></p>")
+    return _page("登录失败", body)
+
+
 def _write_allowed(handler) -> bool:
     """写接口防护：仅本机 + 拒绝跨站（防 CSRF 篡改 base_url/webhook 窃取密钥）。
 
@@ -1064,8 +1221,61 @@ def make_handler(db: str):
             self.end_headers()
             self.wfile.write(data)
 
+        def _redirect(self, location: str, set_cookie: str = ""):
+            """302 跳转，可带 Set-Cookie（登录建会话/登出清会话）。"""
+            self.send_response(302)
+            self.send_header("Location", location)
+            if set_cookie:
+                self.send_header("Set-Cookie", set_cookie)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def _auth_login(self):
+            """/auth/login：生成 state → 302 跳飞书授权页。未配置 App 则友好提示（不 500）。"""
+            from . import config
+            u = urlparse(self.path)
+            nxt = parse_qs(u.query).get("next", ["/"])[0]
+            app_id = config.resolve("FEISHU_APP_ID")
+            redirect_uri = config.resolve("FEISHU_REDIRECT_URI")
+            if not app_id or not redirect_uri:          # DoD#3：缺配置给提示页，不报 500
+                self._send(render_auth_hint()); return
+            state = _new_state(nxt)
+            self._redirect(_feishu_authorize_url(app_id, redirect_uri, state))
+
+        def _auth_callback(self):
+            """/auth/callback：校验 state → code 换 token → 取用户信息 → 建会话 → 302 回原始路径。"""
+            q = parse_qs(urlparse(self.path).query)
+            code = q.get("code", [""])[0]
+            state = q.get("state", [""])[0]
+            st = _oauth_states.pop(state, None)         # state 一次性消费（防 CSRF/重放）
+            if not code or not st:
+                self._send(render_auth_error("授权校验失败（state 无效或已过期），请重新登录。"), 400)
+                return
+            try:
+                token = _feishu_user_access_token(code)
+                user = _feishu_user_info(token)
+            except Exception as e:                      # 飞书 API 异常也不 500，给可读提示
+                self._send(render_auth_error(f"飞书登录失败：{str(e)[:200]}"), 502); return
+            sid = _new_session(user)
+            self._redirect(_safe_next(st.get("next", "/")), _cookie_header(sid))
+
+        def _auth_logout(self):
+            """/auth/logout：清会话 + 过期 cookie → 302 回登录页。"""
+            sid = _sid_from_cookie(self)
+            if sid:
+                sessions.pop(sid, None)
+            self._redirect("/auth/login", _cookie_header("", clear=True))
+
         def do_GET(self):
             u = urlparse(self.path)
+            # /auth/* 是登录流程页，本身无需登录
+            if u.path == "/auth/login":
+                self._auth_login(); return
+            if u.path == "/auth/callback":
+                self._auth_callback(); return
+            if u.path == "/auth/logout":
+                self._auth_logout(); return
+            # /config 维持原有本机保护（SSH 隧道用），不走飞书 OAuth
             if u.path == "/config":
                 self._send(render_config()); return
             if u.path == "/config/test":
@@ -1105,6 +1315,9 @@ def make_handler(db: str):
                 self._send(render_login()); return
             if u.path == "/watch":
                 self._send(render_watch()); return
+            # 其余所有页面路由：飞书 OAuth 登录后才可访问，未登录 302 到登录页并带回跳路径
+            if _require_auth(self) is None:
+                self._redirect(f"/auth/login?next={quote(self.path, safe='')}"); return
             store = Store(db)
             try:
                 if u.path == "/":
