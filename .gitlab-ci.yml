@@ -14,11 +14,13 @@ default:
   - pyproject.toml
   - deploy/**/*
   - yuqing/**/*
+  - scripts/ci/**/*
 
 stages:
   - verify
   - build
   - deploy
+  - notify
 
 workflow:
   rules:
@@ -167,3 +169,37 @@ deploy_cce:
     - sed "s|cyber-intelligence:[^ ]*|cyber-intelligence:${IMAGE_TAG}|g" deploy/k8s/deployment.yaml | kubectl apply -f - -n nexus-prod
     - kubectl apply -f deploy/k8s/ingress.yaml -n nexus-prod
     - kubectl rollout status deployment/cyber-intelligence -n nexus-prod --timeout=3m
+
+# ── notify (only after CCE deployment) ──────────────────────────────────────
+
+.notify_cce:
+  stage: notify
+  image: python:3.12-slim
+  retry: 0
+  variables:
+    # Reuse OAuth application credentials already held as protected CI variables.
+    FEISHU_APP_ID: "$CYBER_FEISHU_APP_ID"
+    FEISHU_APP_SECRET: "$CYBER_FEISHU_APP_SECRET"
+  script:
+    - python3 scripts/ci/notify.py "$NOTIFY_STATUS"
+
+notify_cce_success:
+  extends: .notify_cce
+  needs:
+    - job: deploy_cce
+      optional: true
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "master"'
+      when: on_success
+    - when: never
+  variables:
+    NOTIFY_STATUS: success
+
+notify_cce_failure:
+  extends: .notify_cce
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "master"'
+      when: on_failure
+    - when: never
+  variables:
+    NOTIFY_STATUS: failure
