@@ -1,10 +1,10 @@
 ## ADDED Requirements
 
 ### Requirement: Workbench assets are packaged and served
-The system SHALL package the phase-one workbench HTML, CSS, and JavaScript inside the `yuqing` Python distribution and SHALL serve the entry page at `/v2` and static assets below `/v2/assets/`.
+The system SHALL package the phase-one workbench HTML, CSS, and JavaScript inside the `yuqing` Python distribution and SHALL serve the entry page at `/` and `/v2`, with static assets below `/v2/assets/`.
 
 #### Scenario: Local workbench load
-- **WHEN** an authenticated user requests `/v2`
+- **WHEN** an authenticated user requests `/` or `/v2`
 - **THEN** the server returns the packaged workbench entry page with HTTP 200
 
 #### Scenario: Packaged asset load
@@ -16,14 +16,14 @@ The system SHALL package the phase-one workbench HTML, CSS, and JavaScript insid
 - **THEN** the server rejects the request and does not disclose another local file
 
 ### Requirement: Legacy dashboards remain available
-The system SHALL keep `/`, `/dash`, and `/exec` operational while `/v2` is being validated.
+The system SHALL keep `/legacy`, `/dash`, and `/exec` operational as rollback routes after the workbench becomes the default `/` entry.
 
 #### Scenario: Workbench rollback
 - **WHEN** the new workbench is unavailable or disabled
 - **THEN** an authenticated user can still access the existing legacy dashboard routes
 
 ### Requirement: Build artifacts contain the workbench
-The wheel and Docker image SHALL contain every workbench asset required by `/v2`.
+The wheel and Docker image SHALL contain every workbench asset required by `/` and `/v2`.
 
 #### Scenario: Wheel content verification
 - **WHEN** CI builds the Python wheel

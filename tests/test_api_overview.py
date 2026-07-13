@@ -212,15 +212,18 @@ class OverviewHTTPTest(unittest.TestCase):
         self.assertEqual(400, status)
         self.assertEqual("INVALID_PARAMETER", json.loads(body)["error"]["code"])
 
-    def test_v2_and_legacy_dashboards_remain_available_locally(self) -> None:
+    def test_workbench_default_and_legacy_dashboards_remain_available_locally(self) -> None:
         local_headers = {"Host": "127.0.0.1:8000"}
-        status, _, body = self.request("/v2", headers=local_headers)
-        self.assertEqual(200, status)
-        self.assertIn(b'id="view-overview"', body)
-        self.assertIn(b'/v2/assets/styles.css', body)
-        self.assertNotIn(b'id="view-knowledge"', body)
-        self.assertNotIn(b'id="view-integrations"', body)
-        self.assertNotIn("审核流程说明".encode("utf-8"), body)
+        for path in ("/", "/v2"):
+            with self.subTest(path=path):
+                status, _, body = self.request(path, headers=local_headers)
+                self.assertEqual(200, status)
+                self.assertIn(b'id="view-overview"', body)
+                self.assertIn(b'/v2/assets/styles.css', body)
+                self.assertIn(b'/v2/assets/app.js', body)
+                self.assertNotIn(b'id="view-knowledge"', body)
+                self.assertNotIn(b'id="view-integrations"', body)
+                self.assertNotIn("审核流程说明".encode("utf-8"), body)
 
         for asset, expected_type in (
             ("styles.css", "text/css; charset=utf-8"),
@@ -250,7 +253,7 @@ class OverviewHTTPTest(unittest.TestCase):
                 status, _, _ = self.request(path, headers=local_headers)
                 self.assertEqual(404, status)
 
-        for path in ("/", "/dash", "/exec"):
+        for path in ("/legacy", "/dash", "/exec"):
             with self.subTest(path=path):
                 status, _, body = self.request(path, headers=local_headers)
                 self.assertEqual(200, status)

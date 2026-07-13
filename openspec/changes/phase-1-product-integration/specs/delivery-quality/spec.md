@@ -28,9 +28,9 @@ The CI verification stage SHALL run unit tests, end-to-end selfcheck, architectu
 - **WHEN** any required verification command exits non-zero
 - **THEN** CI blocks image build or deployment
 
-### Requirement: Workbench is released through a reversible rollout
-The system SHALL keep `/v2` as a gray release until real-user acceptance is complete and SHALL retain a previously working image for rollback.
+### Requirement: Workbench release is directly reversible
+The system SHALL release the workbench directly at `/`, retain legacy routes, and retain a previously working image for rollback.
 
-#### Scenario: Gray release failure
-- **WHEN** blocking errors are found during workbench validation
-- **THEN** operators can continue using legacy routes and roll back without losing SQLite data
+#### Scenario: Production release failure
+- **WHEN** blocking errors are found after the workbench becomes the default entry
+- **THEN** operators can switch users to legacy routes or roll back the image without losing SQLite data

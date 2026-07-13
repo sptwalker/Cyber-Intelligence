@@ -8,7 +8,7 @@
 
 ## 目标
 
-1. 将新版工作台纳入 `yuqing` Python 包、`/v2` 路由和 Docker 构建链路。
+1. 将新版工作台纳入 `yuqing` Python 包、默认 `/` 路由、兼容 `/v2` 路由和 Docker 构建链路。
 2. 建立稳定、带版本号的产品 JSON API，替换前端全部内置业务数据。
 3. 交付八个真实可用的一期页面：
    - 总览工作台
@@ -24,10 +24,10 @@
 
 ## Capabilities
 
-- `workbench-delivery`：将新版工作台纳入 Python 包、`/v2` 路由、wheel 和 Docker 镜像。
+- `workbench-delivery`：将新版工作台纳入 Python 包、默认 `/` 与兼容 `/v2` 路由、wheel 和 Docker 镜像。
 - `product-api`：提供统一、版本化、可鉴权的 `/api/v1` 产品接口。
 - `analyst-workflows`：接通采集、质检、分析、预警、诉求、报告和监控配置的真实业务闭环。
-- `delivery-quality`：建立异常状态、安全渲染、自动化测试、CI 和灰度发布标准。
+- `delivery-quality`：建立异常状态、安全渲染、自动化测试、CI 和可回退的直接发布标准。
 
 ## 一期范围
 
@@ -58,7 +58,7 @@
 
 ## 成功标准
 
-- `/v2` 在本地、Docker 和线上环境均能加载新版工作台。
+- `/` 和 `/v2` 在本地、Docker 和线上环境均能加载新版工作台，其中 `/` 是默认入口。
 - 一期页面不再包含 `REVIEW_QUEUE`、`ALERTS`、`REPORTS` 等静态业务数组。
 - 所有写操作刷新后仍然存在，并能在 SQLite 中审计。
 - 每个页面都有加载、空数据、请求失败和无权限状态。

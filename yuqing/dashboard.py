@@ -1728,7 +1728,7 @@ def make_handler(db: str):
                 self._send(render_config(test_msg=_run_test(parse_qs(u.query).get("p", [""])[0]))); return
             if u.path.startswith("/api/v1/"):
                 self._handle_api_v1_get(u); return
-            if u.path in ("/v2", "/v2/"):
+            if u.path in ("/", "/v2", "/v2/"):
                 if not _write_allowed(self) and _require_auth(self) is None:
                     self._redirect(f"/auth/login?next={quote(self.path, safe='')}"); return
                 self._send_workbench_asset("index.html")
@@ -1779,7 +1779,7 @@ def make_handler(db: str):
                 self._redirect(f"/auth/login?next={quote(self.path, safe='')}"); return
             store = Store(db)
             try:
-                if u.path == "/":
+                if u.path == "/legacy":
                     body = render_index(store)
                 elif u.path == "/exec":
                     body = render_exec(store)

@@ -42,8 +42,9 @@ yuqing/web/workbench/
 
 `dashboard.py` 提供：
 
-- `GET /v2` → `index.html`
+- `GET /`、`GET /v2` → `index.html`
 - `GET /v2/assets/*` → 静态资源
+- `GET /legacy` → 旧版首页
 - `GET/POST /api/v1/*` → JSON API
 
 同时更新 `pyproject.toml` package-data 和 Docker 构建验证，确保资源进入 wheel 和镜像。
@@ -252,7 +253,7 @@ python -m compileall -q yuqing
 
 ## 10. 发布策略
 
-1. `/v2` 作为灰度入口，旧 `/`、`/dash`、`/exec` 保留。
-2. 分析师完成两轮真实数据走查后，才将 `/v2` 设为默认入口。
-3. 每次部署先验证 `/auth/login`、`/api/v1/overview`、`/v2` 静态资源和 Store schema。
-4. 保留一版旧镜像，出现读模型错误可快速回滚。
+1. 新版工作台直接作为 `/` 默认入口，同时保留 `/v2` 兼容入口。
+2. 旧版页面保留在 `/legacy`、`/dash`、`/exec`，作为应用内快速回退入口。
+3. 每次部署验证 `/auth/login`、`/`、`/api/v1/overview`、`/v2` 静态资源和 Store schema。
+4. 保留一版旧镜像，出现阻断问题时可切换旧版路由或快速回滚镜像。
