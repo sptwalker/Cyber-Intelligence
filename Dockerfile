@@ -26,6 +26,7 @@ RUN apt-get update \
 COPY --from=builder /wheels /wheels
 RUN python -m pip install --no-cache-dir --no-index --find-links=/wheels "cyber-intelligence-yuqing[all]" \
     && rm -rf /wheels
+RUN python -c "from importlib.resources import files; root = files('yuqing').joinpath('web/workbench'); required = ['index.html','styles.css','api.js','state.js','app.js','views/overview.js','views/collect.js','views/analysis.js','views/incidents.js','views/backlog.js']; missing = [name for name in required if not root.joinpath(name).is_file()]; assert not missing, f'missing /v2 workbench assets: {missing}'"
 
 USER 1001:1001
 

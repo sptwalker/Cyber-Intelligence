@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import html
 import json
+import mimetypes
 import re
 import threading
 import io
@@ -20,9 +21,12 @@ import time
 import urllib.request
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse, parse_qs, urlencode, quote
+from pathlib import Path
+from urllib.parse import urlparse, parse_qs, urlencode, quote, unquote
 
 from .store import Store
+
+_WORKBENCH_DIR = Path(__file__).parent / "web" / "workbench"
 
 # 跑批触发状态（单机、内存态）。后台线程跑 run.main，主线程照常服务/api/run/status。
 # ponytail: GIL 保护的 dict + 一把锁守住"是否在跑"的读改；单机看板无需任务队列。
@@ -65,6 +69,28 @@ def _do_run(db: str) -> None:
         _run_state["current"] = ""
         _run_state["stop"] = False
         _run_state["running"] = False
+
+
+def _start_background_run(db: str) -> dict:
+    """Start at most one background run and return a version-neutral state shape."""
+    with _run_lock:
+        if _run_state["running"]:
+            return {"running": True, "started": False, "message": "已有分析在运行"}
+        _run_state["running"] = True
+        _run_state["stop"] = False
+        _run_state["current"] = "正在启动…"
+        threading.Thread(target=_do_run, args=(db,), daemon=True).start()
+        return {"running": True, "started": True, "message": "已启动"}
+
+
+def _request_run_stop() -> dict:
+    """Request cooperative stop at the next platform boundary."""
+    with _run_lock:
+        if not _run_state["running"]:
+            return {"running": False, "stop_requested": False, "message": "当前无运行中的采集"}
+        _run_state["stop"] = True
+        _run_state["current"] = "正在停止…（完成当前平台后中止）"
+        return {"running": True, "stop_requested": True, "message": "已请求停止"}
 
 # ---- 飞书 OAuth 网页登录（stdlib 实现，零新依赖）----------------------------------
 # 员工用企业飞书身份扫码/点击授权即可访问看板，替代 Nginx Basic Auth。
@@ -1362,6 +1388,14 @@ def _mutation_allowed(handler) -> bool:
 
 def make_handler(db: str):
     class Handler(BaseHTTPRequestHandler):
+        def end_headers(self):
+            """Keep legacy JSON APIs available while advertising the versioned successor."""
+            path = urlparse(getattr(self, "path", "")).path
+            if path.startswith("/api/") and not path.startswith("/api/v1/"):
+                self.send_header("Deprecation", "true")
+                self.send_header("Link", '</api/v1>; rel="successor-version"')
+            super().end_headers()
+
         def _send(self, body: str, code: int = 200):
             data = body.encode("utf-8")
             self.send_response(code)
@@ -1369,6 +1403,265 @@ def make_handler(db: str):
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
             self.wfile.write(data)
+
+        def _send_bytes(self, data: bytes, content_type: str, code: int = 200):
+            self.send_response(code)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            self.wfile.write(data)
+
+        def _send_workbench_asset(self, asset_name: str) -> None:
+            """Serve one packaged asset without allowing path traversal."""
+            decoded = unquote(asset_name)
+            relative = Path(decoded)
+            if (not decoded or "\x00" in decoded or relative.is_absolute()
+                    or decoded.startswith(("/", "\\"))):
+                self.send_error(404)
+                return
+            root = _WORKBENCH_DIR.resolve()
+            candidate = (root / relative).resolve()
+            try:
+                candidate.relative_to(root)
+            except ValueError:
+                self.send_error(404)
+                return
+            if not candidate.is_file():
+                self.send_error(404)
+                return
+            content_type = mimetypes.guess_type(candidate.name)[0] or "application/octet-stream"
+            if content_type.startswith("text/") or content_type in ("application/javascript", "application/json"):
+                content_type += "; charset=utf-8"
+            self._send_bytes(candidate.read_bytes(), content_type)
+
+        def _send_json(self, payload: dict, code: int = 200):
+            data = json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8")
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            self.wfile.write(data)
+
+        def _send_api_error(self, code: str, message: str, status: int):
+            from .api.responses import error_payload
+            self._send_json(error_payload(code, message), status)
+
+        def _api_principal(self) -> dict | None:
+            """Return one reusable identity shape for local and OAuth API reads."""
+            if _write_allowed(self):
+                return {"open_id": "local", "name": "本机用户", "auth_type": "local"}
+            user = _require_auth(self)
+            return ({**user, "auth_type": "oauth"} if user else None)
+
+        def _api_mutation_allowed(self) -> bool:
+            """Expose the existing session/origin/forwarded-host checks to v1 routes."""
+            return _mutation_allowed(self)
+
+        def _handle_api_v1_get(self, u) -> None:
+            from .api.overview import RANGES, build_overview, resolve_entity
+            from .api.responses import APIError, enum_value, query_value, success_payload
+
+            if self._api_principal() is None:
+                self._send_api_error("UNAUTHORIZED", "请先登录", 401)
+                return
+            incident_match = re.fullmatch(r"/api/v1/incidents/([0-9A-Za-z_-]+)", u.path)
+            if u.path not in {
+                "/api/v1/overview", "/api/v1/collection/status",
+                "/api/v1/collection/login-status", "/api/v1/analysis", "/api/v1/incidents",
+                "/api/v1/backlog", "/api/v1/backlog.csv",
+            } and incident_match is None:
+                self._send_api_error("NOT_FOUND", "接口不存在", 404)
+                return
+
+            query = parse_qs(u.query, keep_blank_values=True)
+            try:
+                requested_entity = query_value(query, "entity_id")
+                from . import load_watch
+                watch = load_watch()
+                if u.path in {"/api/v1/overview", "/api/v1/analysis"}:
+                    range_name = enum_value(query, "range", RANGES, default="7d")
+                    store = Store(db)
+                    try:
+                        if u.path == "/api/v1/overview":
+                            data, quality, quality_notes = build_overview(
+                                store, watch, entity_id=requested_entity, range_name=range_name,
+                            )
+                        else:
+                            from .api.analysis import build_analysis
+                            data, quality, quality_notes = build_analysis(
+                                store, watch, entity_id=requested_entity, range_name=range_name,
+                            )
+                    finally:
+                        store.close()
+                elif u.path == "/api/v1/collection/status":
+                    from . import login
+                    from .api.collection import build_collection_status
+                    include_login = enum_value(query, "include_login", ("0", "1"), default="1") == "1"
+
+                    def _login_provider(platforms):
+                        return login.bridge_ok(), login.status(platforms)
+
+                    store = Store(db)
+                    try:
+                        data, quality, quality_notes = build_collection_status(
+                            store, watch, dict(_run_state), entity_id=requested_entity,
+                            login_provider=_login_provider if include_login else None,
+                        )
+                    finally:
+                        store.close()
+                elif u.path == "/api/v1/collection/login-status":
+                    from . import login
+                    from .api.collection import execution_environment
+                    resolved_id, entity_name = resolve_entity(watch, requested_entity)
+                    platforms = [str(item) for item in (watch.get("platforms") or [])]
+                    bridge_ok, bridge_message = login.bridge_ok()
+                    data = {
+                        "entity": {"id": resolved_id, "name": entity_name},
+                        "execution": execution_environment(),
+                        "bridge": {"ok": bridge_ok, "message": bridge_message},
+                        "platforms": login.status(platforms),
+                    }
+                    quality = "ok" if bridge_ok else "degraded"
+                    quality_notes = [] if bridge_ok else [bridge_message]
+                elif u.path in {"/api/v1/backlog", "/api/v1/backlog.csv"}:
+                    from .api.backlog import backlog_csv as build_backlog_csv, build_backlog
+                    if u.path == "/api/v1/backlog.csv":
+                        store = Store(db)
+                        try:
+                            csv_text, csv_entity_id = build_backlog_csv(
+                                store, watch, entity_id=requested_entity,
+                            )
+                        finally:
+                            store.close()
+                        data = {"_csv": csv_text, "entity": {"id": csv_entity_id}}
+                        quality, quality_notes = "ok", []
+                    else:
+                        range_name = enum_value(query, "range", RANGES, default="30d")
+                        store = Store(db)
+                        try:
+                            data, quality, quality_notes = build_backlog(
+                                store, watch, entity_id=requested_entity, range_name=range_name,
+                            )
+                        finally:
+                            store.close()
+                else:
+                    from .api.incidents import build_incident_detail, build_incident_list
+                    store = Store(db)
+                    try:
+                        if incident_match is not None:
+                            data, quality, quality_notes = build_incident_detail(
+                                store, watch, incident_match.group(1),
+                            )
+                        else:
+                            status = query_value(query, "status")
+                            data, quality, quality_notes = build_incident_list(
+                                store, watch, entity_id=requested_entity, status=status,
+                            )
+                    finally:
+                        store.close()
+            except APIError as exc:
+                self._send_api_error(exc.code, exc.message, exc.status)
+                return
+            except (SystemExit, OSError, ValueError, TypeError):
+                self._send_api_error("CONFIG_ERROR", "监控配置无法读取", 503)
+                return
+            except Exception:
+                self._send_api_error("INTERNAL_ERROR", "服务暂时不可用", 500)
+                return
+
+            if u.path == "/api/v1/backlog.csv":
+                csv_data = data["_csv"].encode("utf-8-sig")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/csv; charset=utf-8")
+                self.send_header("Content-Disposition", 'attachment; filename="yuqing-backlog.csv"')
+                self.send_header("Content-Length", str(len(csv_data)))
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.end_headers()
+                self.wfile.write(csv_data)
+                return
+            self._send_json(success_payload(
+                data,
+                entity_id=data["entity"]["id"],
+                data_quality=quality,
+                quality_notes=quality_notes,
+            ))
+
+        def _handle_api_v1_post(self, u) -> None:
+            from .api.collection import execution_environment
+            from .api.overview import resolve_entity
+            from .api.responses import APIError, json_body, success_payload
+
+            if not self._api_mutation_allowed():
+                self._send_api_error("FORBIDDEN", "无权执行该操作", 403)
+                return
+            incident_match = re.fullmatch(r"/api/v1/incidents/([0-9A-Za-z_-]+)/transition", u.path)
+            if u.path not in {"/api/v1/collection/run", "/api/v1/collection/stop"} and incident_match is None:
+                self._send_api_error("NOT_FOUND", "接口不存在", 404)
+                return
+            try:
+                from . import load_watch
+                watch = load_watch()
+                entity_id, _ = resolve_entity(watch, None)
+            except APIError as exc:
+                self._send_api_error(exc.code, exc.message, exc.status)
+                return
+            except (SystemExit, OSError, ValueError, TypeError):
+                self._send_api_error("CONFIG_ERROR", "监控配置无法读取", 503)
+                return
+
+            if incident_match is not None:
+                from . import alerts
+                from .api.incidents import allowed_action_names, serialize_incident
+                try:
+                    body = json_body(self)
+                    action = str(body.get("action") or "").strip()
+                    note = str(body.get("note") or "").strip()[:1000]
+                    store = Store(db)
+                    try:
+                        incident = store.get_incident(incident_match.group(1))
+                        if incident is None:
+                            raise APIError("NOT_FOUND", "事件不存在", 404)
+                        if action not in allowed_action_names(incident):
+                            raise APIError("INVALID_TRANSITION", "当前状态不能执行该操作", 409)
+                        principal = self._api_principal() or {}
+                        actor = principal.get("name") or principal.get("open_id") or "unknown"
+                        now = _dt.datetime.now().astimezone().isoformat(timespec="seconds")
+                        result = alerts.transition(
+                            store, incident["incident_id"], action, actor=actor, now=now, note=note,
+                        )
+                        if not result.get("success"):
+                            code = "DELIVERY_FAILED" if action == "escalate" else "INVALID_TRANSITION"
+                            raise APIError(code, result.get("message") or "事件状态更新失败", 409)
+                        data = {
+                            "incident": serialize_incident(result["incident"]),
+                            "executive_pushed": bool(result.get("executive_pushed")),
+                        }
+                    finally:
+                        store.close()
+                except APIError as exc:
+                    self._send_api_error(exc.code, exc.message, exc.status)
+                    return
+                except Exception:
+                    self._send_api_error("INTERNAL_ERROR", "服务暂时不可用", 500)
+                    return
+                self._send_json(success_payload(data, entity_id=entity_id, data_quality="ok"))
+                return
+            if u.path == "/api/v1/collection/run":
+                execution = execution_environment()
+                if not execution["can_run"]:
+                    self._send_api_error("COLLECTION_UNAVAILABLE", execution["message"], 409)
+                    return
+                result = _start_background_run(db)
+            else:
+                result = _request_run_stop()
+                if not result["stop_requested"]:
+                    self._send_api_error("NOT_RUNNING", result["message"], 409)
+                    return
+            self._send_json(success_payload(result, entity_id=entity_id, data_quality="ok"))
 
         def _redirect(self, location: str, set_cookie: str = ""):
             """302 跳转，可带 Set-Cookie（登录建会话/登出清会话）。"""
@@ -1433,14 +1726,17 @@ def make_handler(db: str):
                 if not _write_allowed(self):
                     self.send_error(403); return
                 self._send(render_config(test_msg=_run_test(parse_qs(u.query).get("p", [""])[0]))); return
-            if u.path == "/v2":
+            if u.path.startswith("/api/v1/"):
+                self._handle_api_v1_get(u); return
+            if u.path in ("/v2", "/v2/"):
                 if not _write_allowed(self) and _require_auth(self) is None:
                     self._redirect(f"/auth/login?next={quote(self.path, safe='')}"); return
-                # 新版前端（Ant Design + 完整架构）
-                from pathlib import Path
-                html_path = Path(__file__).parent / 'dashboard_v2.html'
-                with open(html_path, 'r', encoding='utf-8') as f:
-                    self._send(f.read())
+                self._send_workbench_asset("index.html")
+                return
+            if u.path.startswith("/v2/assets/"):
+                if self._api_principal() is None:
+                    self.send_error(401); return
+                self._send_workbench_asset(u.path[len("/v2/assets/"):])
                 return
             if u.path == "/api/run/status":
                 if not (_write_allowed(self) or _require_auth(self)):
@@ -1565,6 +1861,8 @@ def make_handler(db: str):
 
         def do_POST(self):
             u = urlparse(self.path)
+            if u.path.startswith("/api/v1/"):
+                self._handle_api_v1_post(u); return
             if u.path == "/config":
                 if not _write_allowed(self):
                     self.send_error(403); return
@@ -1577,15 +1875,7 @@ def make_handler(db: str):
                 # 触发一次跑批（collect→analyze→report），后台线程执行，防并发
                 if not _mutation_allowed(self):
                     self.send_error(403); return
-                with _run_lock:
-                    if _run_state["running"]:
-                        result = {"running": True, "message": "已有分析在运行"}
-                    else:
-                        _run_state["running"] = True
-                        _run_state["stop"] = False
-                        _run_state["current"] = "正在启动…"
-                        threading.Thread(target=_do_run, args=(db,), daemon=True).start()
-                        result = {"running": True, "message": "已启动"}
+                result = _start_background_run(db)
                 payload = json.dumps(result, ensure_ascii=False).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -1596,12 +1886,8 @@ def make_handler(db: str):
                 # 协作式停止：置标志，采集在下个平台边界中止（已采数据保留）
                 if not _mutation_allowed(self):
                     self.send_error(403); return
-                if _run_state["running"]:
-                    _run_state["stop"] = True
-                    _run_state["current"] = "正在停止…（完成当前平台后中止）"
-                    result = {"success": True, "message": "已请求停止"}
-                else:
-                    result = {"success": False, "message": "当前无运行中的采集"}
+                stop_result = _request_run_stop()
+                result = {"success": stop_result["stop_requested"], "message": stop_result["message"]}
                 payload = json.dumps(result, ensure_ascii=False).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")

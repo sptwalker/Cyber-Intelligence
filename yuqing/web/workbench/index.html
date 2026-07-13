@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cyber-Intelligence · 舆情运营调度中心（融合版）</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/v2/assets/styles.css">
+
+</head>
+<body>
+
+<!-- ============ 顶部工具栏 ============ -->
+<header class="top-tabs">
+  <div class="top-left">
+    <button class="hamburger" id="hamburgerBtn" onclick="toggleSidebar()">☰</button>
+    <div class="brand">Cyber-Intelligence · 舆情运营调度中心</div>
+  </div>
+  <div class="top-right">
+    <span class="user-chip"><span class="avatar-dot">张</span>张舆情 · 舆情监控岗</span>
+  </div>
+</header>
+
+<div class="app-body">
+  <!-- ============ 左侧导航 ============ -->
+  <aside class="sidebar" id="sidebar"></aside>
+
+  <!-- ============ 主内容区 ============ -->
+  <main class="content">
+    <div class="content-header">
+      <div>
+        <h1 id="viewTitle">总览 Dashboard</h1>
+        <div class="header-sub" id="viewSubtitle">全平台舆情概况 · 实时更新</div>
+      </div>
+      <div class="search-box" onclick="openSearch()">🔍 搜索已加载内容 <span class="kbd">⌘K</span></div>
+      <div class="health-strip" id="healthStrip"></div>
+    </div>
+
+    <!-- ---------- 1. 总览 ---------- -->
+    <section class="view active" id="view-overview">
+      <div class="card section-gap" id="topRiskCard"></div>
+      <div class="stat-grid" id="overviewStats"></div>
+      <div class="grid-2">
+        <div class="card section-gap">
+          <div class="panel-title">
+            <span>近 7 日情感趋势</span>
+            <span class="chart-legend" aria-label="图例">
+              <span class="legend-item"><i class="legend-dot" style="background:#10b981"></i>正面</span>
+              <span class="legend-item"><i class="legend-dot" style="background:#f43f5e"></i>负面</span>
+              <span class="legend-item"><i class="legend-dot" style="background:#8b5cf6"></i>中性</span>
+            </span>
+          </div>
+          <div class="insight-chart" id="sentimentTrendChart"></div>
+        </div>
+        <div class="card section-gap">
+          <div class="panel-title">今日待办 <small>点击直达处理</small></div>
+          <div id="todoList"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- 2. 采集接入 ---------- -->
+    <section class="view" id="view-collect">
+      <div class="hint-bar">健康三态说明：<span class="badge badge-green">● 正常</span> 采集正常波动内　<span class="badge badge-amber">● 疑似异常</span> 量级骤降/骤增需核查　<span class="badge badge-red">● 失败</span> 采集中断需立即处理</div>
+      <div class="card section-gap" id="collectionExecution"></div>
+      <div class="card section-gap">
+        <div class="panel-title">平台采集状态 <small>真实运行记录、健康与登录状态</small></div>
+        <div style="overflow-x:auto;">
+          <table class="data-table">
+            <thead><tr><th>平台</th><th>健康</th><th>上次运行</th><th>采集量</th><th>登录</th><th>说明</th></tr></thead>
+            <tbody id="collectTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- 3. 数据质检工作台 ---------- -->
+    <section class="view" id="view-review">
+      <div class="hint-bar">快捷键（先点击卡片选中）：<span class="kbd">1</span>标正面　<span class="kbd">2</span>标中性　<span class="kbd">3</span>标负面　<span class="kbd">i</span>标反讽　<span class="kbd">s</span>标水军　<span class="kbd">r</span>标串味　<span class="kbd">Enter</span>快速通过　<span class="kbd">Esc</span>取消选中</div>
+
+      <div class="card section-gap" id="chuanweiPanel"></div>
+
+      <div class="filter-bar">
+        <select id="filterStatus" onchange="applyReviewFilters()">
+          <option value="all">全部复核状态</option>
+          <option value="pending">待复核</option>
+          <option value="approved">已通过</option>
+          <option value="rejected">已拒绝</option>
+        </select>
+        <select id="filterPlatform" onchange="applyReviewFilters()">
+          <option value="all">全部平台</option>
+        </select>
+        <select id="filterConf" onchange="applyReviewFilters()">
+          <option value="all">全部置信度</option>
+          <option value="low">低 &lt; 0.5</option>
+          <option value="mid">中 0.5 ~ 0.8</option>
+          <option value="high">高 &gt; 0.8</option>
+        </select>
+        <span class="muted" style="font-size:12px;" id="filterResultCount"></span>
+      </div>
+
+      <div class="batch-bar">
+        <label><input type="checkbox" id="selectAllBox" onchange="toggleSelectAll(this.checked)"> 全选当前列表</label>
+        <span class="muted" style="font-size:12px;">已选 <b id="selectedCount">0</b> 条</span>
+        <button class="btn btn-green btn-sm" onclick="batchApprove()">✓ 批量通过</button>
+        <button class="btn btn-danger btn-sm" onclick="batchReject()">✕ 批量拒绝</button>
+      </div>
+
+      <div id="reviewCardList"></div>
+    </section>
+
+    <!-- ---------- 4. 情绪分析 ---------- -->
+    <section class="view" id="view-analysis">
+      <div class="view-title-row">
+        <div class="tab-pills" id="analysisPeriodPills"></div>
+      </div>
+      <div class="grid-2">
+        <div class="card section-gap">
+          <div class="panel-title">ABSA 六维口碑雷达图 <small>硬件 / 系统 / 游戏兼容 / 售后 / 价格 / 物流</small></div>
+          <div class="chart-wrap" id="radarChart"></div>
+        </div>
+        <div class="card section-gap">
+          <div class="panel-title">主要诉求 Top5</div>
+          <div class="wordcloud" id="wordcloud"></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="panel-title">六维明细</div>
+        <div style="overflow-x:auto;">
+          <table class="data-table">
+            <thead><tr><th>维度</th><th>正面数</th><th>负面数</th><th>净情绪分</th><th>负面占比</th></tr></thead>
+            <tbody id="absaTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="card" style="margin-top:16px;">
+        <div class="panel-title">品牌健康指数 BHI 趋势 <small>近 7 天</small></div>
+        <div class="chart-wrap" id="bhiChart"></div>
+      </div>
+    </section>
+
+    <!-- ---------- 5. 预警中心 ---------- -->
+    <section class="view" id="view-alerts">
+      <div class="hint-bar">事件操作由服务器状态机决定；页面只展示当前状态允许执行的动作。</div>
+      <div class="kanban-4" id="alertsKanban"></div>
+
+      <div class="card section-gap" style="margin-top:16px;">
+        <div class="panel-title">冷却队列 <small>已处理事件，历史可查</small></div>
+        <div id="cooldownList"></div>
+      </div>
+    </section>
+
+    <!-- ---------- 6. 报告中心 ---------- -->
+    <section class="view" id="view-reports">
+      <div class="view-title-row">
+        <div class="tab-pills" id="reportsTabPills"></div>
+      </div>
+
+      <div id="reportsTabWeekly">
+        <div class="grid-2">
+          <div>
+            <div class="card section-gap">
+              <div class="panel-title">周报历史 <small>点击切换预览</small></div>
+              <div id="reportHistoryList"></div>
+            </div>
+            <div class="card section-gap">
+              <div class="panel-title" id="reportPreviewTitle">可溯源周报预览</div>
+              <div class="report-preview" id="reportPreviewBody"></div>
+            </div>
+          </div>
+          <div>
+            <div class="card">
+              <div class="panel-title">一期范围</div>
+              <div class="hint-bar">报告中心一期只提供确定性生成、查看和来源溯源。多人审批和发布状态机将在后续阶段实现。</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="reportsTabDaily" style="display:none;">
+        <div class="card">
+          <div class="panel-title">老板一句话日报</div>
+          <button class="btn btn-block" style="margin-bottom:10px;" disabled>手动生成接口接入中</button>
+          <div id="bossDailyList"></div>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- ---------- 7. 诉求管理 ---------- -->
+    <section class="view" id="view-backlog">
+      <div class="card">
+        <div class="panel-title"><span>诉求 Backlog <small>从真实 Bug、投诉和功能诉求聚合</small></span><button class="btn btn-sm" onclick="downloadBacklogCSV()">导出 CSV</button></div>
+        <div id="backlogQuality"></div>
+        <div style="overflow-x:auto;">
+          <table class="data-table">
+            <thead><tr><th>类型</th><th>话题</th><th>声量</th><th>热度</th><th>代表文档</th></tr></thead>
+            <tbody id="backlogTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- 8. 监控配置 ---------- -->
+    <section class="view" id="view-config">
+      <div class="card section-gap">
+        <div class="panel-title">关键词管理（watch.yaml）</div>
+        <div id="entityConfigList"></div>
+      </div>
+      <div class="card">
+        <div class="panel-title">平台开关与调度</div>
+        <div style="overflow-x:auto;">
+          <table class="data-table">
+            <thead><tr><th>平台</th><th>启用</th><th>调度频率</th></tr></thead>
+            <tbody id="platformScheduleBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<!-- ============ 抽屉 ============ -->
+<div class="drawer-overlay hidden" id="drawerOverlay" onclick="if(event.target===this)closeDrawer()">
+  <div class="drawer">
+    <div class="drawer-head">
+      <h3 id="drawerTitle" style="font-size:15px;font-weight:800;"></h3>
+      <button class="drawer-close" onclick="closeDrawer()">✕</button>
+    </div>
+    <div id="drawerBody"></div>
+  </div>
+</div>
+
+<!-- ============ 全局搜索 ⌘K ============ -->
+<div class="modal-overlay hidden" id="searchOverlay" onclick="if(event.target===this)closeSearch()">
+  <div class="search-modal-box">
+    <div class="search-input-row">
+      <span>🔍</span>
+      <input id="searchInput" type="text" placeholder="搜索当前系统内容…（至少 2 个字，回车定位第一条）" oninput="handleSearchInput()" onkeydown="if(event.key==='Enter')confirmSearch()">
+      <span class="kbd">Esc</span>
+    </div>
+    <div class="search-results" id="searchResults"></div>
+  </div>
+</div>
+
+<div class="toast-container" id="toastContainer"></div>
+
+<script src="/v2/assets/api.js"></script>
+<script src="/v2/assets/state.js"></script>
+<script src="/v2/assets/app.js"></script>
+<script src="/v2/assets/views/overview.js"></script>
+<script src="/v2/assets/views/collect.js"></script>
+<script src="/v2/assets/views/analysis.js"></script>
+<script src="/v2/assets/views/incidents.js"></script>
+<script src="/v2/assets/views/backlog.js"></script>
+
+</body>
+</html>

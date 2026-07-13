@@ -22,7 +22,14 @@ yuqing-run = "yuqing.run:main"
 yuqing-dashboard = "yuqing.dashboard:serve"
 
 [tool.setuptools]
-packages = ["yuqing"]
+packages = ["yuqing", "yuqing.api"]
 
 [tool.setuptools.package-data]
-yuqing = ["watch.yaml", "dashboard_v2.html"]
+yuqing = [
+  "watch.yaml",
+  "dashboard_v2.html",
+  "web/workbench/*.html",
+  "web/workbench/*.css",
+  "web/workbench/*.js",
+  "web/workbench/views/*.js",
+]
