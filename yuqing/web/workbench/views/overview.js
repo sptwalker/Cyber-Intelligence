@@ -138,7 +138,7 @@ function renderTodoList(data){
     todos.push({text:'处理 ' + data.top_incident.level + ' 事件：' + (data.top_incident.summary || data.top_incident.incident_id), action:"switchView('alerts')"});
   }
   if(data.pending_review_count>0){
-    todos.push({text:'复核 ' + data.pending_review_count + ' 条待处理内容（质检功能开发中）', disabled:true});
+    todos.push({text:'复核 ' + data.pending_review_count + ' 条待处理内容', action:"switchView('review')"});
   }
   if(data.latest_report){
     todos.push({text:'查看最新报告 ' + data.latest_report.run_id + '（报告功能开发中）', disabled:true});

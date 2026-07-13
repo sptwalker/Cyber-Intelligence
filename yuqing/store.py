@@ -100,8 +100,9 @@ CREATE TABLE IF NOT EXISTS run_log (
     status TEXT, health TEXT, note TEXT, ts TEXT, entry TEXT, source_query TEXT
 );
 CREATE TABLE IF NOT EXISTS review (
-    doc_id TEXT, kind TEXT, verdict TEXT, note TEXT, ts TEXT
+    doc_id TEXT, kind TEXT, verdict TEXT, note TEXT, ts TEXT, actor TEXT DEFAULT ''
 );
+CREATE INDEX IF NOT EXISTS idx_review_doc ON review(doc_id);
 CREATE TABLE IF NOT EXISTS annotations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     doc_id TEXT NOT NULL,
@@ -195,6 +196,7 @@ class Store:
             ("features.analyzed_at", "ALTER TABLE features ADD COLUMN analyzed_at TEXT DEFAULT ''"),
             ("run_log.entry", "ALTER TABLE run_log ADD COLUMN entry TEXT DEFAULT ''"),
             ("run_log.source_query", "ALTER TABLE run_log ADD COLUMN source_query TEXT DEFAULT ''"),
+            ("review.actor", "ALTER TABLE review ADD COLUMN actor TEXT DEFAULT ''"),
         ]
         for _name, ddl in migrations:
             try:                          # 轻量迁移：旧库补列（plays 播放量 / embedding 语义向量）
@@ -497,10 +499,15 @@ class Store:
             "OR f.signals LIKE '%cross_disagree%')",
             (conf_lt, risk_ge)).fetchone()[0]
 
-    def add_review(self, doc_id: str, verdict: str, note: str = "", ts: str = "", kind: str = "qc") -> None:
+    def add_review(self, doc_id: str, verdict: str, note: str = "", ts: str = "", kind: str = "qc",
+                   actor: str = "", *, commit: bool = True) -> None:
         """记录人工复核结论（verdict 如 ok/改负/改正/串味/水军/危机确认）。"""
-        self.conn.execute("INSERT INTO review VALUES(?,?,?,?,?)", (doc_id, kind, verdict, note, ts))
-        self.conn.commit()
+        self.conn.execute(
+            "INSERT INTO review(doc_id,kind,verdict,note,ts,actor) VALUES(?,?,?,?,?,?)",
+            (doc_id, kind, verdict, note, ts, actor),
+        )
+        if commit:
+            self.conn.commit()
 
     def review_stats(self) -> dict:
         """质检 KPI：已复核数 + 机器判错数（verdict!=ok）。"""

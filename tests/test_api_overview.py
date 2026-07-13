@@ -221,6 +221,7 @@ class OverviewHTTPTest(unittest.TestCase):
                 self.assertIn(b'id="view-overview"', body)
                 self.assertIn(b'/v2/assets/styles.css', body)
                 self.assertIn(b'/v2/assets/app.js', body)
+                self.assertIn(b'/v2/assets/views/review.js', body)
                 self.assertNotIn(b'id="view-knowledge"', body)
                 self.assertNotIn(b'id="view-integrations"', body)
                 self.assertNotIn("审核流程说明".encode("utf-8"), body)
@@ -230,6 +231,7 @@ class OverviewHTTPTest(unittest.TestCase):
             ("api.js", "text/javascript; charset=utf-8"),
             ("app.js", "text/javascript; charset=utf-8"),
             ("views/overview.js", "text/javascript; charset=utf-8"),
+            ("views/review.js", "text/javascript; charset=utf-8"),
         ):
             with self.subTest(asset=asset):
                 status, headers, body = self.request(f"/v2/assets/{asset}", headers=local_headers)
@@ -240,7 +242,8 @@ class OverviewHTTPTest(unittest.TestCase):
         status, _, app_body = self.request("/v2/assets/app.js", headers=local_headers)
         self.assertEqual(200, status)
         app_text = app_body.decode("utf-8")
-        for view_id in ("review", "reports", "config"):
+        self.assertRegex(app_text, r"\{id:'review'[^}]*badgeFn:'pendingReviewCount'")
+        for view_id in ("reports", "config"):
             self.assertRegex(app_text, rf"\{{id:'{re.escape(view_id)}'[^}}]*disabled:true")
         self.assertIn('disabled aria-disabled="true"', app_text)
 

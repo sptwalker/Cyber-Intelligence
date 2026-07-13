@@ -14,6 +14,10 @@ var state = {
   range:'7d',
   overview:{status:'idle', data:null, meta:null, error:''},
   collection:{status:'idle', data:null, meta:null, error:'', mutating:false, pollTimer:null},
+  review:{
+    status:'idle', data:null, meta:null, error:'', items:[], nextCursor:null,
+    mutating:false, filters:{status:'pending', platform:'', confidence:'all', limit:20}
+  },
   analysis:{status:'idle', data:null, meta:null, error:'', range:'7d'},
   incidents:{status:'idle', data:null, meta:null, error:'', active:null, mutating:false},
   backlog:{status:'idle', data:null, meta:null, error:'', range:'30d'}

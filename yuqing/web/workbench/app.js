@@ -19,7 +19,7 @@ function userChip(id){
 var VIEWS = [
   {id:'overview', group:'工作台', icon:'◆', label:'总览工作台'},
   {id:'collect', group:'工作台', icon:'⇩', label:'采集接入'},
-  {id:'review', group:'工作台', icon:'☑', label:'数据质检工作台', disabled:true, disabledReason:'质检接口接入中'},
+  {id:'review', group:'工作台', icon:'☑', label:'数据质检工作台', badgeFn:'pendingReviewCount'},
   {id:'analysis', group:'分析洞察', icon:'◔', label:'情绪分析'},
   {id:'alerts', group:'分析洞察', icon:'▲', label:'预警中心'},
   {id:'backlog', group:'分析洞察', icon:'☷', label:'诉求管理'},
@@ -55,22 +55,6 @@ var COLLECT_TASKS = PLATFORMS.map(function(p){
 
 var ENTITIES = [
   {id:'youdoo', name:'Youdoo Box', aliases:['优度盒子','Youdoo','优度掌机'], mustNot:['优度日化','有度科技'], crisisBoost:['自燃','爆炸','起火','猝死']}
-];
-
-/* ===================== 数据质检队列（12 条示例） ===================== */
-var REVIEW_QUEUE = [
-  {id:'wb-20260709-041', platform:'weibo', author:'@数码阿凯', text:'Youdoo Box 玩了三小时手心烫得能煎蛋，官方说的散热优化在哪呢', polarity:'neg', type:'normal', confidence:0.91, status:'pending', time:'09:41'},
-  {id:'dy-20260709-032', platform:'douyin', author:'掌机小陈', text:'优度盒子这做工是真的可以，1000 出头能有这体验很惊喜了', polarity:'pos', type:'normal', confidence:0.88, status:'pending', time:'09:32'},
-  {id:'xhs-20260709-019', platform:'xhs', author:'糖糖爱游戏', text:'退货三次官方客服都不给回复，果然“优度日化”的售后态度也一个样', polarity:'neg', type:'chuanwei', confidence:0.62, status:'pending', time:'09:19'},
-  {id:'wb-20260709-038', platform:'weibo', author:'@匿名吃瓜', text:'呵呵，Youdoo 这“旗舰散热”，笑不活了[doge]', polarity:'neg', type:'irony', confidence:0.77, status:'pending', time:'09:38'},
-  {id:'dy-20260709-027', platform:'douyin', author:'掌机评测君', text:'优度盒子 优度盒子 优度盒子 真的很好 大家快来买 优度盒子', polarity:'pos', type:'shuijun', confidence:0.94, status:'pending', time:'09:27'},
-  {id:'bi-20260709-011', platform:'bilibili', author:'掌机拆解UP', text:'拆解发现这代散热鳍片密度提升了 30%，实测满载壳温 41.2℃，属于正常区间', polarity:'neu', type:'normal', confidence:0.85, status:'pending', time:'09:11'},
-  {id:'jd-20260709-008', platform:'jd', author:'京东用户1832', text:'物流很快，包装完好，游戏兼容性比想象中好，五星', polarity:'pos', type:'normal', confidence:0.9, status:'approved', time:'08:58'},
-  {id:'wb-20260709-035', platform:'weibo', author:'@维权小分队', text:'建议大家去看看优度日化最近的投诉记录，跟Youdoo没关系但是老是被搜混', polarity:'neu', type:'chuanwei', confidence:0.58, status:'pending', time:'09:35'},
-  {id:'zh-20260709-006', platform:'zhihu', author:'知乎-硬核评测', text:'从散热设计角度分析 Youdoo Box 与同价位竞品的差异，详见回答正文', polarity:'neu', type:'normal', confidence:0.81, status:'pending', time:'08:40'},
-  {id:'dy-20260709-021', platform:'douyin', author:'游戏搬砖工', text:'退款流程走了两周还没到账，客服说的“3-5工作日”是骗人的吗', polarity:'neg', type:'normal', confidence:0.86, status:'pending', time:'09:21'},
-  {id:'xhs-20260709-014', platform:'xhs', author:'小红薯8827', text:'哈哈哈买它就是为了发热吧，暖手宝内味了', polarity:'neg', type:'irony', confidence:0.73, status:'pending', time:'09:14'},
-  {id:'wb-20260709-029', platform:'weibo', author:'@机圈老张', text:'Youdoo Box 618 到手 999，性价比属实能打，兼容性没踩雷', polarity:'pos', type:'normal', confidence:0.87, status:'approved', time:'09:29'}
 ];
 
 /* ===================== 情绪分析 ABSA ===================== */
@@ -511,6 +495,9 @@ function buildRadarChart(dims, series, w, h){
 
 /* ===================== 导航渲染 ===================== */
 function pendingReviewCount(){
+  if(state.review && state.review.data && state.review.filters.status==='pending'){
+    return state.review.data.total || 0;
+  }
   return state.overview.data ? state.overview.data.pending_review_count : 0;
 }
 function renderNav(){

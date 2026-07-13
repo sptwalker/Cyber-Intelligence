@@ -14,6 +14,8 @@
 
 ## 快速开始
 
+面向舆情分析师的完整页面和日常值班说明见 [`docs/用户操作指南.md`](docs/用户操作指南.md)。
+
 前置：Python 3.10+，推荐 `pip install -e .`；Claude/语义能力可用
 `pip install -e '.[all]'` 安装可选依赖。采集需本机
 [opencli](https://github.com/jackwener/opencli) + 对应平台登录态。未安装可选 SDK 或 API 不可用时自动降级，不阻塞规则分析和确定性报告。
@@ -29,6 +31,15 @@ python -m yuqing.cli ask "发热问题在哪些平台"   # AI 舆情问答（语
 python -m yuqing.cli review        # 人工复核队列（数据质量）
 python -m yuqing.cli suggest       # 语义扩展：建议加入监控的新词/话题（需 EMBED_API_KEY）
 ```
+
+如需在不连接真实平台、也不覆盖现有 `yuqing.db` 的情况下体验可操作工作台，可生成独立联调库：
+
+```bash
+python3 populate_demo_data.py
+python3 -c "from yuqing.dashboard import serve; serve(db='yuqing-demo.db')"
+```
+
+联调库包含与当前 `watch.yaml` 对齐的内容、待复核队列、平台运行记录、待确认事件和历史报告；重建时需显式追加 `--force`。
 
 三层视图（一份数据，三张皮肤）：**高管** `/exec` 品牌健康指数 BHI + 危机灯 + 关键结论；**中层** `/dash` Chart.js 战情室（情绪/声量/BHI趋势 + 方面雷达 + KOL榜 + 异常账号簇 + 竞品SOV）；**基层** `/` 详情看板 + 复核队列 + CLI。
 

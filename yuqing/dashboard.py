@@ -1472,7 +1472,7 @@ def make_handler(db: str):
             if u.path not in {
                 "/api/v1/overview", "/api/v1/collection/status",
                 "/api/v1/collection/login-status", "/api/v1/analysis", "/api/v1/incidents",
-                "/api/v1/backlog", "/api/v1/backlog.csv",
+                "/api/v1/backlog", "/api/v1/backlog.csv", "/api/v1/reviews",
             } and incident_match is None:
                 self._send_api_error("NOT_FOUND", "接口不存在", 404)
                 return
@@ -1482,7 +1482,24 @@ def make_handler(db: str):
                 requested_entity = query_value(query, "entity_id")
                 from . import load_watch
                 watch = load_watch()
-                if u.path in {"/api/v1/overview", "/api/v1/analysis"}:
+                if u.path == "/api/v1/reviews":
+                    from .api.reviews import CONFIDENCE_BUCKETS, REVIEW_STATUSES, build_reviews
+                    status = enum_value(query, "status", REVIEW_STATUSES, default="pending")
+                    confidence = enum_value(
+                        query, "confidence", CONFIDENCE_BUCKETS, default="all",
+                    )
+                    platform = query_value(query, "platform")
+                    limit = query_value(query, "limit")
+                    cursor = query_value(query, "cursor")
+                    store = Store(db)
+                    try:
+                        data, quality, quality_notes = build_reviews(
+                            store, watch, entity_id=requested_entity, status=status,
+                            platform=platform, confidence=confidence, limit=limit, cursor=cursor,
+                        )
+                    finally:
+                        store.close()
+                elif u.path in {"/api/v1/overview", "/api/v1/analysis"}:
                     range_name = enum_value(query, "range", RANGES, default="7d")
                     store = Store(db)
                     try:
@@ -1599,7 +1616,11 @@ def make_handler(db: str):
                 self._send_api_error("FORBIDDEN", "无权执行该操作", 403)
                 return
             incident_match = re.fullmatch(r"/api/v1/incidents/([0-9A-Za-z_-]+)/transition", u.path)
-            if u.path not in {"/api/v1/collection/run", "/api/v1/collection/stop"} and incident_match is None:
+            review_match = (None if u.path == "/api/v1/reviews/batch" else
+                            re.fullmatch(r"/api/v1/reviews/([0-9A-Za-z_-]+)", u.path))
+            if u.path not in {
+                "/api/v1/collection/run", "/api/v1/collection/stop", "/api/v1/reviews/batch",
+            } and incident_match is None and review_match is None:
                 self._send_api_error("NOT_FOUND", "接口不存在", 404)
                 return
             try:
@@ -1611,6 +1632,43 @@ def make_handler(db: str):
                 return
             except (SystemExit, OSError, ValueError, TypeError):
                 self._send_api_error("CONFIG_ERROR", "监控配置无法读取", 503)
+                return
+
+            if review_match is not None or u.path == "/api/v1/reviews/batch":
+                from .api.reviews import save_review, save_review_batch
+                try:
+                    body = json_body(self)
+                    requested_entity = str(body.get("entity_id") or "").strip() or None
+                    resolved_entity_id, _ = resolve_entity(watch, requested_entity)
+                    principal = self._api_principal() or {}
+                    actor = principal.get("name") or principal.get("open_id") or "unknown"
+                    store = Store(db)
+                    try:
+                        if review_match is not None:
+                            review = save_review(
+                                store, watch, review_match.group(1),
+                                verdict=str(body.get("verdict") or "").strip(),
+                                entity_id=requested_entity,
+                                note=str(body.get("note") or ""),
+                                actor=actor,
+                            )
+                            data = {"review": review}
+                        else:
+                            data = save_review_batch(
+                                store, watch, body.get("items"),
+                                entity_id=requested_entity, actor=actor,
+                            )
+                    finally:
+                        store.close()
+                except APIError as exc:
+                    self._send_api_error(exc.code, exc.message, exc.status)
+                    return
+                except Exception:
+                    self._send_api_error("INTERNAL_ERROR", "服务暂时不可用", 500)
+                    return
+                self._send_json(success_payload(
+                    data, entity_id=resolved_entity_id, data_quality="ok",
+                ))
                 return
 
             if incident_match is not None:
