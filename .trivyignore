@@ -1,25 +1,175 @@
-# Trivy ignore — Debian bookworm (python:3.12-slim) system library CVEs
-# All entries below have status fix_deferred or affected in Debian stable;
-# no fixed version is available in bookworm. Re-evaluate on each base image upgrade.
-# Expiry: 2027-01-01
+# Trivy ignore — Debian bookworm packages with no fixed version
+# Evidence: collector scan in pipeline 1465 / job 8483 (Debian 12.15).
+# Policy: re-evaluate on each base-image upgrade; all entries expire 2027-01-01.
 
-# util-linux / libblkid1 / libuuid1 / libsmartcols1 / bsdutils / mount / login
-# CVE-2026-53615: Integer Overflow in libblkid/src/partitions/dos.c — fix_deferred
+# Existing Debian findings retained from the prior reviewed policy set.
+# CVE-2026-53615: Status=fix_deferred; Reason=util-linux packages have no Debian bookworm fixed version; Expires=2027-01-01
 CVE-2026-53615
-
-# gzip — CVE-2026-41992: Global buffer overflow — no fix in bookworm
+# CVE-2026-41992: Status=not_fixed; Reason=gzip has no Debian bookworm fixed version; Expires=2027-01-01
 CVE-2026-41992
-
-# libacl1 — CVE-2026-54369: Symlink traversal privilege escalation — affected
+# CVE-2026-54369: Status=affected; Reason=libacl1 has no Debian bookworm fixed version; Expires=2027-01-01
 CVE-2026-54369
-
-# ncurses (libncursesw6 / libtinfo6 / ncurses-base / ncurses-bin)
-# CVE-2025-69720: Buffer overflow vulnerability — fix_deferred
+# CVE-2025-69720: Status=fix_deferred; Reason=ncurses packages have no Debian bookworm fixed version; Expires=2027-01-01
 CVE-2025-69720
-
-# perl-base — multiple CVEs, fix_deferred or affected in Debian bookworm stable
+# CVE-2026-42496: Status=not_fixed; Reason=perl-base has no Debian bookworm fixed version; Expires=2027-01-01
 CVE-2026-42496
+# CVE-2026-8376: Status=not_fixed; Reason=perl-base has no Debian bookworm fixed version; Expires=2027-01-01
 CVE-2026-8376
+# CVE-2026-42497: Status=not_fixed; Reason=perl-base has no Debian bookworm fixed version; Expires=2027-01-01
 CVE-2026-42497
+# CVE-2026-48962: Status=not_fixed; Reason=perl-base has no Debian bookworm fixed version; Expires=2027-01-01
 CVE-2026-48962
+# CVE-2026-9538: Status=not_fixed; Reason=perl-base has no Debian bookworm fixed version; Expires=2027-01-01
 CVE-2026-9538
+
+# curl / libcurl4
+# CVE-2026-12064: Status=fix_deferred; Reason=curl packages have no Debian bookworm fixed version; Expires=2027-01-01
+CVE-2026-12064
+# CVE-2026-6276: Status=affected; Reason=curl packages have no Debian bookworm fixed version; Expires=2027-01-01
+CVE-2026-6276
+# CVE-2026-8286: Status=fix_deferred; Reason=curl packages have no Debian bookworm fixed version; Expires=2027-01-01
+CVE-2026-8286
+# CVE-2026-8927: Status=not_fixed; Reason=curl packages have no Debian bookworm fixed version; Expires=2027-01-01
+CVE-2026-8927
+# CVE-2026-8932: Status=not_fixed; Reason=curl packages have no Debian bookworm fixed version; Expires=2027-01-01
+CVE-2026-8932
+
+# libcups2
+# CVE-2026-34980: Status=affected; Reason=libcups2 has no Debian bookworm fixed version; Expires=2027-01-01
+CVE-2026-34980
+
+# libexpat1
+# CVE-2025-59375: Status=will_not_fix; Reason=libexpat1 has no Debian bookworm fixed version; Expires=2027-01-01
+CVE-2025-59375
+# CVE-2026-25210: Status=affected; Reason=libexpat1 has no Debian bookworm fixed version; Expires=2027-01-01
+CVE-2026-25210
+# CVE-2026-45186: Status=not_fixed; Reason=libexpat1 has no Debian bookworm fixed version; Expires=2027-01-01
+CVE-2026-45186
+# CVE-2026-56131: Status=not_fixed; Reason=libexpat1 has no Debian bookworm fixed version; Expires=2027-01-01
+CVE-2026-56131
+# CVE-2026-56407: Status=not_fixed; Reason=libexpat1 has no Debian bookworm fixed version; Expires=2027-01-01
+CVE-2026-56407
+# CVE-2026-56408: Status=not_fixed; Reason=libexpat1 has no Debian bookworm fixed version; Expires=2027-01-01
+CVE-2026-56408
+
+# libglib2.0-0
+# CVE-2026-58016: Status=fix_deferred; Reason=libglib2.0-0 has no Debian bookworm fixed version; Expires=2027-01-01
+CVE-2026-58016
+# CVE-2026-58010: Status=not_fixed; Reason=libglib2.0-0 has no Debian bookworm fixed version; Expires=2027-01-01
+CVE-2026-58010
+# CVE-2026-58011: Status=not_fixed; Reason=libglib2.0-0 has no Debian bookworm fixed version; Expires=2027-01-01
+CVE-2026-58011
+# CVE-2026-58012: Status=not_fixed; Reason=libglib2.0-0 has no Debian bookworm fixed version; Expires=2027-01-01
+CVE-2026-58012
+# CVE-2026-58013: Status=not_fixed; Reason=libglib2.0-0 has no Debian bookworm fixed version; Expires=2027-01-01
+CVE-2026-58013
+# CVE-2026-58014: Status=not_fixed; Reason=libglib2.0-0 has no Debian bookworm fixed version; Expires=2027-01-01
+CVE-2026-58014
+# CVE-2026-58015: Status=not_fixed; Reason=libglib2.0-0 has no Debian bookworm fixed version; Expires=2027-01-01
+CVE-2026-58015
+
+# harfbuzz
+# CVE-2023-25193: Status=affected; Reason=harfbuzz packages have no Debian bookworm fixed version; Expires=2027-01-01
+CVE-2023-25193
+
+# libldap-2.5-0
+# CVE-2023-2953: Status=not_fixed; Reason=libldap-2.5-0 has no Debian bookworm fixed version; Expires=2027-01-01
+CVE-2023-2953
+
+# Debian nodejs / libnode108
+# CVE-2026-48930: Status=not_fixed; Reason=Debian nodejs packages have no bookworm fixed version; Expires=2027-01-01
+CVE-2026-48930
+# CVE-2026-48615: Status=not_fixed; Reason=Debian nodejs packages have no bookworm fixed version; Expires=2027-01-01
+CVE-2026-48615
+# CVE-2026-48617: Status=not_fixed; Reason=Debian nodejs packages have no bookworm fixed version; Expires=2027-01-01
+CVE-2026-48617
+# CVE-2026-48619: Status=not_fixed; Reason=Debian nodejs packages have no bookworm fixed version; Expires=2027-01-01
+CVE-2026-48619
+# CVE-2026-48933: Status=not_fixed; Reason=Debian nodejs packages have no bookworm fixed version; Expires=2027-01-01
+CVE-2026-48933
+# CVE-2026-48937: Status=not_fixed; Reason=Debian nodejs packages have no bookworm fixed version; Expires=2027-01-01
+CVE-2026-48937
+
+# Debian Python 3.11 packages
+# CVE-2025-69534: Status=not_fixed; Reason=Python 3.11 packages have no Debian bookworm fixed version; Expires=2027-01-01
+CVE-2025-69534
+# CVE-2026-11940: Status=fix_deferred; Reason=Python 3.11 packages have no Debian bookworm fixed version; Expires=2027-01-01
+CVE-2026-11940
+# CVE-2026-3644: Status=affected; Reason=Python 3.11 packages have no Debian bookworm fixed version; Expires=2027-01-01
+CVE-2026-3644
+# CVE-2026-7210: Status=not_fixed; Reason=Python 3.11 packages have no Debian bookworm fixed version; Expires=2027-01-01
+CVE-2026-7210
+
+# libsndfile1 / libsqlite3-0 / libssh2-1
+# CVE-2026-37555: Status=fix_deferred; Reason=libsndfile1 has no Debian bookworm fixed version; Expires=2027-01-01
+CVE-2026-37555
+# CVE-2025-7458: Status=affected; Reason=libsqlite3-0 has no Debian bookworm fixed version; Expires=2027-01-01
+CVE-2025-7458
+# CVE-2026-55199: Status=not_fixed; Reason=libssh2-1 has no Debian bookworm fixed version; Expires=2027-01-01
+CVE-2026-55199
+# CVE-2026-55200: Status=not_fixed; Reason=libssh2-1 has no Debian bookworm fixed version; Expires=2027-01-01
+CVE-2026-55200
+# CVE-2026-7598: Status=not_fixed; Reason=libssh2-1 has no Debian bookworm fixed version; Expires=2027-01-01
+CVE-2026-7598
+
+# libtiff6
+# CVE-2023-52355: Status=will_not_fix; Reason=libtiff6 has no Debian bookworm fixed version; Expires=2027-01-01
+CVE-2023-52355
+# CVE-2026-12912: Status=affected; Reason=libtiff6 has no Debian bookworm fixed version; Expires=2027-01-01
+CVE-2026-12912
+
+# Debian node-undici
+# CVE-2026-12151: Status=not_fixed; Reason=node-undici has no Debian bookworm fixed version; Expires=2027-01-01
+CVE-2026-12151
+# CVE-2026-22036: Status=not_fixed; Reason=node-undici has no Debian bookworm fixed version; Expires=2027-01-01
+CVE-2026-22036
+# CVE-2026-2229: Status=not_fixed; Reason=node-undici has no Debian bookworm fixed version; Expires=2027-01-01
+CVE-2026-2229
+# CVE-2026-6734: Status=not_fixed; Reason=node-undici has no Debian bookworm fixed version; Expires=2027-01-01
+CVE-2026-6734
+# CVE-2026-9697: Status=not_fixed; Reason=node-undici has no Debian bookworm fixed version; Expires=2027-01-01
+CVE-2026-9697
+
+# Other Debian Python packages
+# CVE-2023-50782: Status=will_not_fix; Reason=python3-cryptography has no Debian bookworm fixed version; Expires=2027-01-01
+CVE-2023-50782
+# CVE-2026-57585: Status=affected; Reason=python3-msgpack has no Debian bookworm fixed version; Expires=2027-01-01
+CVE-2026-57585
+# CVE-2026-54059: Status=fix_deferred; Reason=python3-pil has no Debian bookworm fixed version; Expires=2027-01-01
+CVE-2026-54059
+# CVE-2026-54060: Status=not_fixed; Reason=python3-pil has no Debian bookworm fixed version; Expires=2027-01-01
+CVE-2026-54060
+# CVE-2026-55379: Status=not_fixed; Reason=python3-pil has no Debian bookworm fixed version; Expires=2027-01-01
+CVE-2026-55379
+# CVE-2026-55380: Status=not_fixed; Reason=python3-pil has no Debian bookworm fixed version; Expires=2027-01-01
+CVE-2026-55380
+# CVE-2025-66471: Status=will_not_fix; Reason=python3-urllib3 has no Debian bookworm fixed version; Expires=2027-01-01
+CVE-2025-66471
+
+# xdg-utils / X server packages
+# CVE-2022-4055: Status=fix_deferred; Reason=xdg-utils has no Debian bookworm fixed version; Expires=2027-01-01
+CVE-2022-4055
+# CVE-2023-5574: Status=fix_deferred; Reason=X server packages have no Debian bookworm fixed version; Expires=2027-01-01
+CVE-2023-5574
+# CVE-2026-50256: Status=affected; Reason=X server packages have no Debian bookworm fixed version; Expires=2027-01-01
+CVE-2026-50256
+# CVE-2026-50257: Status=not_fixed; Reason=X server packages have no Debian bookworm fixed version; Expires=2027-01-01
+CVE-2026-50257
+# CVE-2026-50258: Status=not_fixed; Reason=X server packages have no Debian bookworm fixed version; Expires=2027-01-01
+CVE-2026-50258
+# CVE-2026-50259: Status=not_fixed; Reason=X server packages have no Debian bookworm fixed version; Expires=2027-01-01
+CVE-2026-50259
+# CVE-2026-50260: Status=not_fixed; Reason=X server packages have no Debian bookworm fixed version; Expires=2027-01-01
+CVE-2026-50260
+# CVE-2026-50261: Status=not_fixed; Reason=X server packages have no Debian bookworm fixed version; Expires=2027-01-01
+CVE-2026-50261
+# CVE-2026-50264: Status=not_fixed; Reason=X server packages have no Debian bookworm fixed version; Expires=2027-01-01
+CVE-2026-50264
+# CVE-2026-55999: Status=not_fixed; Reason=X server packages have no Debian bookworm fixed version; Expires=2027-01-01
+CVE-2026-55999
+# CVE-2026-56000: Status=not_fixed; Reason=X server packages have no Debian bookworm fixed version; Expires=2027-01-01
+CVE-2026-56000
+
+# zlib1g
+# CVE-2023-45853: Status=will_not_fix; Reason=zlib1g has no Debian bookworm fixed version; Expires=2027-01-01
+CVE-2023-45853

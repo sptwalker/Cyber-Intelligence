@@ -43,6 +43,7 @@ RUN apt-get update \
     && useradd --uid 1001 --gid collector --create-home --shell /usr/sbin/nologin collector
 
 RUN npm install --global --omit=dev "@jackwener/opencli@${OPENCLI_VERSION}" \
+    && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx \
     && mkdir -p /opt/opencli-extension \
     && curl -fsSL "https://github.com/jackwener/OpenCLI/releases/download/v${OPENCLI_VERSION}/opencli-extension-v${OPENCLI_EXTENSION_VERSION}.zip" \
        -o /tmp/opencli-extension.zip \
@@ -53,6 +54,7 @@ RUN npm install --global --omit=dev "@jackwener/opencli@${OPENCLI_VERSION}" \
 
 COPY --from=builder /wheels /wheels
 RUN /opt/venv/bin/pip install --no-cache-dir --no-index --find-links=/wheels cyber-intelligence-yuqing \
+    && /opt/venv/bin/pip uninstall --yes setuptools \
     && rm -rf /wheels \
     && chown -R collector:collector /opt/opencli-extension /opt/venv /home/collector
 
