@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import datetime as _dt
 from typing import Any, Callable
 
 from ..collect import _OPENCLI
@@ -41,7 +42,9 @@ def execution_environment() -> dict[str, Any]:
     }
 
 
-def latest_platform_runs(store, entity_id: str, platforms: list[str]) -> tuple[list[dict], str, list[str]]:
+def latest_platform_runs(
+    store, entity_id: str, platforms: list[str], *, now: _dt.datetime | None = None,
+) -> tuple[list[dict], str, list[str]]:
     """Return the latest run per platform, aggregating aliases within the same run."""
     rows = store.conn.execute(
         "SELECT run_id,platform,entity_id,health,status,n_fetched,ts,note FROM run_log "
@@ -77,6 +80,12 @@ def latest_platform_runs(store, entity_id: str, platforms: list[str]) -> tuple[l
     output = []
     missing = []
     degraded = []
+    stale = []
+    current = now or _dt.datetime.now().astimezone()
+    try:
+        stale_hours = max(1, int(os.getenv("YUQING_COLLECTION_STALE_HOURS", "24")))
+    except ValueError:
+        stale_hours = 24
     for platform in expected:
         item = latest.get(platform)
         if item is None:
@@ -88,6 +97,20 @@ def latest_platform_runs(store, entity_id: str, platforms: list[str]) -> tuple[l
             })
             continue
         output.append(item)
+        try:
+            observed = _dt.datetime.fromisoformat(str(item["ts"]))
+            if observed.tzinfo is None:
+                observed = observed.replace(tzinfo=current.tzinfo)
+            age_hours = max(0.0, (current - observed.astimezone(current.tzinfo)).total_seconds() / 3600)
+        except (TypeError, ValueError):
+            age_hours = None
+        item["age_hours"] = round(age_hours, 1) if age_hours is not None else None
+        item["stale"] = age_hours is None or age_hours > stale_hours
+        if item["stale"]:
+            item["health"] = "suspect" if item["health"] == "ok" else item["health"]
+            item["status"] = "stale" if item["status"] == "ok" else item["status"]
+            item["note"] = "；".join(filter(None, (item["note"], f"采集记录超过 {stale_hours} 小时未更新")))
+            stale.append(platform)
         if item["health"] != "ok" or item["status"] != "ok":
             degraded.append(f"{platform}({item['health']})")
 
@@ -97,6 +120,8 @@ def latest_platform_runs(store, entity_id: str, platforms: list[str]) -> tuple[l
         return output, "unknown", notes
     if missing:
         notes.append("平台尚无采集记录：" + "、".join(missing))
+    if stale:
+        notes.append("平台采集记录已过期：" + "、".join(stale))
     if degraded:
         notes.append("平台采集状态异常：" + "、".join(degraded))
     return output, ("degraded" if missing or degraded else "ok"), notes

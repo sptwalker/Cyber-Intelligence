@@ -55,6 +55,13 @@ spec:
                 secretKeyRef:
                   name: cyber-intelligence-secrets
                   key: FEISHU_REDIRECT_URI
+            - name: YUQING_WATCH_PATH
+              value: /data/watch.yaml
+            # The dashboard pod never owns an analyst's Chrome/opencli session.
+            - name: YUQING_ENABLE_COLLECTION
+              value: "false"
+            - name: YUQING_COLLECTION_EXECUTION_MODE
+              value: kubernetes-dashboard
           command:
             - python
             - -c
@@ -64,7 +71,7 @@ spec:
               mountPath: /data
           readinessProbe:
             httpGet:
-              path: /auth/login
+              path: /api/v1/readiness
               port: http
             initialDelaySeconds: 5
             periodSeconds: 10

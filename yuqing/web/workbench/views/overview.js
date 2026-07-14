@@ -100,9 +100,9 @@ function renderOverviewStats(data, meta){
   var metrics = data.metrics || {};
   var trend = data.sentiment_trend || [];
   var stats = [
-    {label:'累计有效声量', value:metricDisplay(metrics.total_volume, meta), hint:'数据库累计口径', spark:trend.map(function(x){return x.total;}), color:'#2563eb'},
+    {label:'所选范围声量', value:metricDisplay(metrics.total_volume, meta), hint:'按当前时间范围统计', spark:trend.map(function(x){return x.total;}), color:'#2563eb'},
     {label:'品牌健康指数 BHI', value:metricDisplay(metrics.bhi, meta), hint:metrics.bhi_label || '暂无评级', spark:(data.bhi_trend || []).map(function(x){return x.bhi;}), color:'#7c3aed'},
-    {label:'累计负面内容', value:metricDisplay(metrics.negative_count, meta), hint:metrics.highest_risk===null ? '暂无风险样本' : '最高风险 ' + metrics.highest_risk, spark:trend.map(function(x){return x.negative;}), color:'#e11d48'},
+    {label:'所选范围负面', value:metricDisplay(metrics.negative_count, meta), hint:metrics.highest_risk===null ? '暂无风险样本' : '最高风险 ' + metrics.highest_risk, spark:trend.map(function(x){return x.negative;}), color:'#e11d48'},
     {label:'进行中预警', value:metricDisplay(metrics.active_incident_count, meta), hint:'以事件状态机为准', spark:[], color:'#ea580c'}
   ];
   var html = '';
@@ -118,6 +118,8 @@ function renderOverviewStats(data, meta){
 }
 
 function renderOverviewInsights(data){
+  var labels = {'7d':'近 7 日情感趋势','30d':'近 30 日情感趋势','90d':'近 90 日情感趋势'};
+  if($('#overviewTrendTitle')) $('#overviewTrendTitle').textContent = labels[data.range] || '所选范围情感趋势';
   var rows = (data.sentiment_trend || []).map(function(item){
     return {date:item.day.slice(5), pos:item.positive, neg:item.negative, neu:item.neutral};
   });
@@ -141,7 +143,7 @@ function renderTodoList(data){
     todos.push({text:'复核 ' + data.pending_review_count + ' 条待处理内容', action:"switchView('review')"});
   }
   if(data.latest_report){
-    todos.push({text:'查看最新报告 ' + data.latest_report.run_id + '（报告功能开发中）', disabled:true});
+    todos.push({text:'查看最新报告 ' + data.latest_report.run_id, action:"switchView('reports')"});
   }
   if(!todos.length){
     $('#todoList').innerHTML = overviewStatePanel('empty', '当前没有待处理事项');

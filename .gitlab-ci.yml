@@ -67,9 +67,15 @@ verify_python:
     - .pip_cache
   script:
     - python -m pip install -e ".[all]"
-    # Ruff currently reports pre-existing violations; keep syntax/import checks blocking.
+    - python -m unittest discover -v
+    - python -m yuqing.selfcheck
+    - python -m yuqing.architecture_check
+    - python -m yuqing.scheduler selftest
     - python -m compileall -q yuqing
     - python -c "import yuqing"
+    - python -m pip wheel --no-deps --no-build-isolation --wheel-dir dist .
+    - >-
+      python -c "import glob,zipfile; wheel=glob.glob('dist/*.whl')[0]; names=set(zipfile.ZipFile(wheel).namelist()); required={'yuqing/web/workbench/index.html','yuqing/web/workbench/styles.css','yuqing/web/workbench/api.js','yuqing/web/workbench/state.js','yuqing/web/workbench/app.js','yuqing/web/workbench/views/overview.js','yuqing/web/workbench/views/collect.js','yuqing/web/workbench/views/review.js','yuqing/web/workbench/views/analysis.js','yuqing/web/workbench/views/incidents.js','yuqing/web/workbench/views/backlog.js','yuqing/web/workbench/views/reports.js','yuqing/web/workbench/views/watch.js'}; missing=required-names; assert not missing, f'missing wheel assets {sorted(missing)}'; assert 'yuqing/dashboard_v2.html' not in names, 'stale dashboard_v2.html packaged'"
 
 # ── build (CCE image and scan) ─────────────────────────────────────────────
 

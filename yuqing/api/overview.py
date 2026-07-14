@@ -14,6 +14,22 @@ RANGES = {"7d": 7, "30d": 30, "90d": 90}
 ACTIVE_INCIDENT_STATUSES = {"pending_confirmation", "confirmed", "escalated"}
 
 
+def configured_entities(watch: dict) -> list[dict[str, str]]:
+    """Serialize selectable entities without exposing raw configuration details."""
+    result = []
+    for entity in watch.get("entities") or []:
+        entity_id = str(entity.get("id") or "").strip()
+        if not entity_id:
+            continue
+        aliases = entity.get("aliases") or []
+        result.append({
+            "id": entity_id,
+            "name": str(aliases[0] if aliases else entity_id),
+            "type": str(entity.get("type", "self")),
+        })
+    return result
+
+
 def resolve_entity(watch: dict, requested: str | None) -> tuple[str, str]:
     """Resolve an explicit entity or the first configured self entity."""
     entities = watch.get("entities") or []
@@ -33,7 +49,7 @@ def resolve_entity(watch: dict, requested: str | None) -> tuple[str, str]:
 
 
 def filter_range(rows: list[dict], days: int) -> list[dict]:
-    cutoff = _dt.date.today() - _dt.timedelta(days=days - 1)
+    cutoff = _dt.date.fromisoformat(cutoff_day(days))
     selected = []
     for row in rows:
         try:
@@ -43,6 +59,12 @@ def filter_range(rows: list[dict], days: int) -> list[dict]:
         if day >= cutoff:
             selected.append(row)
     return selected
+
+
+def cutoff_day(days: int, *, today: _dt.date | None = None) -> str:
+    """Return the inclusive first day for a rolling range."""
+    current = today or _dt.date.today()
+    return (current - _dt.timedelta(days=days - 1)).isoformat()
 
 
 def _active_incidents(store, entity_id: str) -> list[dict]:
@@ -67,9 +89,10 @@ def build_overview(store, watch: dict, *, entity_id: str | None = None,
     if range_name not in RANGES:
         raise APIError("INVALID_PARAMETER", "参数 range 仅支持：7d、30d、90d")
     resolved_id, entity_name = resolve_entity(watch, entity_id)
+    since_day = cutoff_day(RANGES[range_name])
 
-    metrics = aggregate(store, resolved_id)
-    brand_health = analytics.brand_health(store, resolved_id)
+    metrics = aggregate(store, resolved_id, since_day=since_day)
+    brand_health = analytics.brand_health(store, resolved_id, since_day=since_day)
     sentiment_trend = filter_range(analytics.daily_series(store, resolved_id), RANGES[range_name])
     bhi_trend = filter_range(analytics.bhi_trend(store, resolved_id), RANGES[range_name])
     incidents = _active_incidents(store, resolved_id)
@@ -87,8 +110,9 @@ def build_overview(store, watch: dict, *, entity_id: str | None = None,
 
     data = {
         "entity": {"id": resolved_id, "name": entity_name},
+        "entities": configured_entities(watch),
         "range": range_name,
-        "metrics_scope": "all_available",
+        "metrics_scope": range_name,
         "metrics": {
             "total_volume": metrics["n_total"],
             "bhi": brand_health.get("bhi"),
@@ -108,7 +132,7 @@ def build_overview(store, watch: dict, *, entity_id: str | None = None,
         ],
         "bhi_trend": bhi_trend,
         "top_incident": incidents[0] if incidents else None,
-        "pending_review_count": store.pending_review_count(),
+        "pending_review_count": store.pending_review_count(entity_id=resolved_id),
         "collection_health": collection_health,
         "latest_report": dict(latest_report) if latest_report else None,
     }

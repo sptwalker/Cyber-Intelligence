@@ -89,6 +89,9 @@
     post:function(path, body, options){
       return request(path, Object.assign({}, options || {}, {method:'POST', body:body || {}}));
     },
+    put:function(path, body, options){
+      return request(path, Object.assign({}, options || {}, {method:'PUT', body:body || {}}));
+    },
     invalidate:invalidate,
     isAuthError:function(error){ return error && (error.status===401 || error.status===403); }
   };

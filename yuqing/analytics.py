@@ -135,9 +135,13 @@ def daily_negative_series(store, entity_id: str) -> list[tuple[str, int]]:
 MIN_ANOMALY_COUNT = 5   # 绝对下限护栏：负面数太少不判异常（避免 3→6 的假放量）
 
 
-def negative_anomaly(store, entity_id: str) -> dict:
+def negative_anomaly(
+    store, entity_id: str, *, since_day: str | None = None,
+) -> dict:
     """最新一天的负面量相对历史的稳健 z 分（z≥2 且绝对数≥下限才算异常放量）。"""
     series = daily_negative_series(store, entity_id)
+    if since_day:
+        series = [(day, count) for day, count in series if day >= since_day]
     if not series:
         return {"day": None, "count": 0, "z": 0.0, "anomaly": False}
     day, count = series[-1]
@@ -146,10 +150,16 @@ def negative_anomaly(store, entity_id: str) -> dict:
             "anomaly": z >= 2.0 and count >= MIN_ANOMALY_COUNT}
 
 
-def aspect_breakdown(store, entity_id: str) -> list[dict]:
+def aspect_breakdown(store, entity_id: str, *, since_day: str | None = None) -> list[dict]:
     """方面级口碑：每个方面的正/负/中计数与负面占比，按负面占比降序。"""
     agg: dict[str, dict] = defaultdict(lambda: {"pos": 0, "neg": 0, "neu": 0})
-    for r in _rows(store, entity_id):
+    rows = _rows(store, entity_id)
+    if since_day:
+        rows = [
+            row for row in rows
+            if normalize_day(row.get("publish_ts"), row.get("fetched_at")) >= since_day
+        ]
+    for r in rows:
         for a in json.loads(r["signals"] or "{}").get("aspects") or []:  # aspects 可能为 null
             pol = a.get("polarity", "neu")
             if pol in ("pos", "neg", "neu"):
@@ -161,14 +171,22 @@ def aspect_breakdown(store, entity_id: str) -> list[dict]:
     return sorted(out, key=lambda x: (x["neg_ratio"], x["neg"]), reverse=True)
 
 
-def rising_topics(store, entity_id: str, split_day: str) -> list[dict]:
+def rising_topics(
+    store, entity_id: str, split_day: str, *, since_day: str | None = None,
+) -> list[dict]:
     """上升话题：split_day 及以后 vs 之前，按话题计数增量降序（放量=苗头）。
 
     split_day 为 'YYYY-MM-DD'；用 fetched_at 前10位分前后窗。
     """
     before: dict[str, int] = defaultdict(int)
     after: dict[str, int] = defaultdict(int)
-    for r in _rows(store, entity_id):
+    rows = _rows(store, entity_id)
+    if since_day:
+        rows = [
+            row for row in rows
+            if normalize_day(row.get("publish_ts"), row.get("fetched_at")) >= since_day
+        ]
+    for r in rows:
         t = r["topic_label"] or "未分类"
         (after if (r["fetched_at"] or "")[:10] >= split_day else before)[t] += 1
     topics = set(before) | set(after)
@@ -177,13 +195,21 @@ def rising_topics(store, entity_id: str, split_day: str) -> list[dict]:
     return sorted([x for x in out if x["delta"] > 0], key=lambda x: x["delta"], reverse=True)
 
 
-def semantic_topics(store, entity_id: str, threshold: float = 0.8, min_size: int = 2) -> list[dict]:
+def semantic_topics(
+    store, entity_id: str, threshold: float = 0.8, min_size: int = 2,
+    *, since_day: str | None = None,
+) -> list[dict]:
     """负面话题语义归并（激活 embedding）：把"续航差"+"电池不耐用"归一簇，替代字符串精确归并。
 
     每簇 {size, sample(代表帖摘要), doc_ids, platforms}，按簇大小降序。
     无 embedding → 降级：按 topic_label 字符串分组（等价旧 rising_topics 的分桶口径）。
     """
     negs = [r for r in _rows(store, entity_id) if r.get("polarity") == "neg"]
+    if since_day:
+        negs = [
+            row for row in negs
+            if normalize_day(row.get("publish_ts"), row.get("fetched_at")) >= since_day
+        ]
     if not negs:
         return []
     from . import embed
@@ -523,12 +549,19 @@ def _bhi_label(bhi) -> str:
     return "健康" if bhi >= 70 else "关注" if bhi >= 50 else "预警" if bhi >= 30 else "危机"
 
 
-def brand_health(store, entity_id: str, weights=None, bhi_weights=None) -> dict:
+def brand_health(
+    store, entity_id: str, weights=None, bhi_weights=None, *, since_day: str | None = None,
+) -> dict:
     """当前品牌健康指数 BHI（0-100）+ 四分量 + 等级。这是给高管的单一可信分。"""
     from .score import Weights, mention_equiv
     weights = weights or Weights()
     bw = bhi_weights or BHI_WEIGHTS
     rows = _rows(store, entity_id)
+    if since_day:
+        rows = [
+            row for row in rows
+            if normalize_day(row.get("publish_ts"), row.get("fetched_at")) >= since_day
+        ]
     total = len(rows)
     if not total:
         return {"bhi": None, "label": "无数据", "components": {}, "n": 0, "crisis_neg": 0}
@@ -538,7 +571,7 @@ def brand_health(store, entity_id: str, weights=None, bhi_weights=None) -> dict:
     neg_mention = sum(mention_equiv(r, weights) for r in rows if r["polarity"] == "neg")
     crisis = sum(1 for r in rows if r["polarity"] == "neg"
                  and json.loads(r["signals"] or "{}").get("crisis"))
-    ab = aspect_breakdown(store, entity_id)
+    ab = aspect_breakdown(store, entity_id, since_day=since_day)
     worst = ab[0]["neg_ratio"] if ab else 0.0
     comp = _bhi_components(total, pos, neg, mention, neg_mention, crisis, worst)
     bhi = round(sum(comp[k] * bw[k] for k in bw), 1)

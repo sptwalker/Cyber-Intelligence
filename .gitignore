@@ -5,6 +5,8 @@ extension/
 *.pyc
 *.db
 .venv/
+build/
+*.egg-info/
 heimao_jina.md
 _seed_demo.py
 _seed.py

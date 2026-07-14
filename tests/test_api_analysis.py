@@ -28,13 +28,15 @@ def seed(path: str) -> None:
     store = Store(path)
     try:
         rows = [
-            ("p1", "pos", "系统体验", {"aspects": [{"aspect": "系统", "polarity": "pos"}]}),
-            ("n1", "neg", "售后", {"aspects": [{"aspect": "售后", "polarity": "neg"}]}),
+            ("p1", "pos", "系统体验", {"aspects": [{"aspect": "系统", "polarity": "pos"}]}, day),
+            ("n1", "neg", "售后", {"aspects": [{"aspect": "售后", "polarity": "neg"}]}, day),
+            ("old", "neg", "历史问题", {"aspects": [{"aspect": "历史", "polarity": "neg"}]},
+             (dt.date.today() - dt.timedelta(days=40)).isoformat()),
         ]
-        for native_id, polarity, topic, signals in rows:
+        for native_id, polarity, topic, signals, publish_day in rows:
             doc = CleanDoc.build(
                 platform="weibo", native_id=native_id, entity_id="youdoo",
-                text=topic, publish_ts=f"{day}T08:00:00+08:00",
+                text=topic, publish_ts=f"{publish_day}T08:00:00+08:00",
                 fetched_at=f"{day}T09:00:00+08:00",
             )
             store.add_clean(doc)
@@ -55,6 +57,7 @@ class AnalysisReadModelTest(unittest.TestCase):
             store = Store(path)
             try:
                 data, quality, notes = build_analysis(store, WATCH)
+                long_range, _, _ = build_analysis(store, WATCH, range_name="90d")
             finally:
                 store.close()
 
@@ -65,6 +68,9 @@ class AnalysisReadModelTest(unittest.TestCase):
         self.assertTrue(data["bhi_trend"])
         self.assertEqual("unknown", quality)
         self.assertTrue(notes)
+
+        self.assertEqual(3, long_range["sample"]["count"])
+        self.assertIn("历史", {item["aspect"] for item in long_range["aspects"]})
 
 
 class AnalysisHTTPTest(unittest.TestCase):

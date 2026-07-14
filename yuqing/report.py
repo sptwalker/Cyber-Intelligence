@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import datetime as _dt
 import json
 import re
 import urllib.request
@@ -20,9 +21,14 @@ from . import insights
 _CITE = re.compile(r"\[来源:([0-9a-f]{6,16})\]")
 
 
-def aggregate(store, entity_id: str) -> dict:
+def aggregate(store, entity_id: str, *, since_day: str | None = None) -> dict:
     """从 features 算聚合指标（全部数字的唯一来源）。"""
     rows = [dict(r) for r in store.joined(entity_id)]
+    if since_day:
+        rows = [
+            row for row in rows
+            if analytics.normalize_day(row.get("publish_ts"), row.get("fetched_at")) >= since_day
+        ]
     n = len(rows)
     negs = sorted((r for r in rows if r["polarity"] == "neg"), key=lambda r: r["risk"], reverse=True)
     by_platform: dict[str, dict] = {}
@@ -39,6 +45,10 @@ def aggregate(store, entity_id: str) -> dict:
         "by_platform": by_platform,
         "top_neg": negs[:10],
         "top_topics": sorted(topics.items(), key=lambda kv: kv[1], reverse=True)[:5],
+        "n_degraded_neg": sum(
+            bool(json.loads(row.get("signals") or "{}").get("influence_degraded"))
+            for row in negs
+        ),
     }
 
 
@@ -46,9 +56,14 @@ def _cite(doc_id: str) -> str:
     return f"[来源:{doc_id}]"
 
 
-def sov(store, watch: dict) -> list[dict]:
+def sov(store, watch: dict, *, since_day: str | None = None) -> list[dict]:
     """竞品对标：声量份额(SOV) + 净情绪(NSR=(正-负)/总)。自有 + 竞品同口径。"""
     rows = [dict(r) for r in store.joined_with_entities()]
+    if since_day:
+        rows = [
+            row for row in rows
+            if analytics.normalize_day(row.get("publish_ts"), row.get("fetched_at")) >= since_day
+        ]
     per: dict[str, dict] = {}
     for r in rows:
         d = per.setdefault(r["matched_entity_id"], {"n": 0, "pos": 0, "neg": 0})
@@ -105,11 +120,14 @@ def _prose_claude(entity_name: str, m: dict, model: str = "claude-sonnet-5") -> 
 
 def build_report(store, watch: dict, *, run_id: str, now: str,
                  health_by_platform: dict[str, str], use_claude: Optional[bool] = None) -> str:
-    """生成周报 Markdown。数字全部来自 aggregate，散文来自 stub/Claude。"""
+    """生成截至 ``now`` 的 7 天周报 Markdown。数字来自同一时间窗口的领域聚合。"""
     if use_claude is None:
         from . import config
         use_claude = bool(config.resolve("ANTHROPIC_API_KEY"))
 
+    report_day = _dt.date.fromisoformat(now[:10])
+    since_day = (report_day - _dt.timedelta(days=6)).isoformat()
+    split_day = (report_day - _dt.timedelta(days=2)).isoformat()
     parts: list[str] = []
     band = health.banner(health_by_platform)
     if band:
@@ -118,10 +136,11 @@ def build_report(store, watch: dict, *, run_id: str, now: str,
     for ent in watch["entities"]:
         if ent.get("type") == "competitor":
             continue  # MVP 只报自有；竞品 SOV 是 Phase 1
-        m = aggregate(store, ent["id"])
+        m = aggregate(store, ent["id"], since_day=since_day)
         name = (ent.get("aliases") or [ent["id"]])[0]
         parts.append(f"# {name} 舆情周报（{now[:10]}）\n")
-        parts.append(f"> 数据来源：{'、'.join(watch['platforms'])}；样本 {m['n_total']} 条。"
+        parts.append(f"> 统计周期：{since_day} 至 {now[:10]}；数据来源：{'、'.join(watch['platforms'])}；"
+                     f"样本 {m['n_total']} 条。"
                      f"**公开渠道抽样、非全量，仅反映相对趋势。**\n")
         if use_claude:
             try:
@@ -148,23 +167,18 @@ def build_report(store, watch: dict, *, run_id: str, now: str,
             parts.append("## 负面 Top 清单（按风险分）\n| # | 平台 | 风险 | 摘要 | 溯源 |\n|---|---|---|---|---|\n"
                          + rows_md)
 
-        degraded = store.conn.execute(
-            "SELECT COUNT(*) FROM clean c JOIN features f USING(doc_id) "
-            "WHERE EXISTS(SELECT 1 FROM document_entities de "
-            "WHERE de.doc_id=c.doc_id AND de.entity_id=?) "
-            "AND f.polarity='neg' AND f.signals LIKE '%influence_degraded%'",
-            (ent["id"],)).fetchone()[0]
+        degraded = m["n_degraded_neg"]
         if degraded:
             parts.append(f"\n> 📉 可信度标注：本产品 {degraded} 条负面风险分为**影响力降级**（⚠降级）"
                          "——平台无点赞/转发数据（如微博搜索），权重仅按'存在'计，不含真实传播影响力，"
                          "**勿据此跨平台比较声量**，需第三方数据补齐。\n")
 
-        anom = analytics.negative_anomaly(store, ent["id"])
+        anom = analytics.negative_anomaly(store, ent["id"], since_day=since_day)
         if anom["anomaly"]:
             parts.append(f"\n> ⚠️ 负面放量异常：{anom['day']} 共 {anom['count']} 条"
                          f"（稳健 z={anom['z']}，显著高于历史基线）\n")
 
-        ab = analytics.aspect_breakdown(store, ent["id"])
+        ab = analytics.aspect_breakdown(store, ent["id"], since_day=since_day)
         if ab:
             parts.append("## 方面级口碑（ABSA）\n| 方面 | 声量 | 负面 | 正面 | 负面占比 |\n|---|---|---|---|---|\n"
                          + "".join(
@@ -172,14 +186,19 @@ def build_report(store, watch: dict, *, run_id: str, now: str,
                 for a in ab) + "\n> 按负面占比降序，恶化最快的方面排在最前。\n")
 
         # 上升话题：仅列有历史基线(上期>0)且本期放量的，避免首次运行全部误判为"上升"
-        rt = [x for x in analytics.rising_topics(store, ent["id"], now[:10]) if x["before"] > 0]
+        rt = [
+            x for x in analytics.rising_topics(
+                store, ent["id"], split_day, since_day=since_day,
+            )
+            if x["before"] > 0
+        ]
         if rt:
             parts.append("## 上升话题（环比放量）\n| 话题 | 上期 | 本期 | 增量 |\n|---|---|---|---|\n"
                          + "".join(f"| {x['topic']} | {x['before']} | {x['after']} | +{x['delta']} |\n"
                                    for x in rt[:5]) + "\n")
 
     if any(e.get("type") == "competitor" for e in watch["entities"]):
-        rows = sov(store, watch)
+        rows = sov(store, watch, since_day=since_day)
         parts.append("## 竞品对标（SOV / 净情绪）\n| 对象 | 类型 | 声量 | 份额SOV | 净情绪NSR |\n|---|---|---|---|---|\n"
                      + "".join(
             f"| {r['name']} | {'自有' if r['type']=='self' else '竞品'} | {r['mentions']} "
@@ -187,7 +206,7 @@ def build_report(store, watch: dict, *, run_id: str, now: str,
                      + "\n> SOV=声量份额，NSR=(正-负)/总；均为**公开抽样口径**，仅供相对对比。\n")
 
     self_ids = {e["id"] for e in watch["entities"] if e.get("type", "self") == "self"}
-    bl = insights.backlog(store, self_ids)
+    bl = insights.backlog(store, self_ids, since_day=since_day)
     if bl:
         parts.append("## 用户诉求→产品需求（待人工确认，不自动建工单）\n"
                      "| 类型 | 话题 | 声量 | 热度 | 代表 |\n|---|---|---|---|---|\n"

@@ -27,7 +27,6 @@ packages = ["yuqing", "yuqing.api"]
 [tool.setuptools.package-data]
 yuqing = [
   "watch.yaml",
-  "dashboard_v2.html",
   "web/workbench/*.html",
   "web/workbench/*.css",
   "web/workbench/*.js",

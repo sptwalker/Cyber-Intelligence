@@ -491,13 +491,22 @@ class Store:
             "OR f.signals LIKE '%cross_disagree%') "
             "ORDER BY f.risk DESC, f.confidence ASC LIMIT ?", (conf_lt, risk_ge, limit)).fetchall()
 
-    def pending_review_count(self, conf_lt: float = 0.6, risk_ge: float = 30.0) -> int:
-        return self.conn.execute(
+    def pending_review_count(
+        self, conf_lt: float = 0.6, risk_ge: float = 30.0,
+        *, entity_id: str | None = None,
+    ) -> int:
+        query = (
             "SELECT COUNT(*) FROM clean c JOIN features f USING(doc_id) "
             "LEFT JOIN review rv ON rv.doc_id=c.doc_id "
             "WHERE rv.doc_id IS NULL AND (f.confidence < ? OR f.is_ironic=1 OR f.risk >= ? "
-            "OR f.signals LIKE '%cross_disagree%')",
-            (conf_lt, risk_ge)).fetchone()[0]
+            "OR f.signals LIKE '%cross_disagree%')"
+        )
+        args: list = [conf_lt, risk_ge]
+        if entity_id:
+            query += (" AND EXISTS(SELECT 1 FROM document_entities de "
+                      "WHERE de.doc_id=c.doc_id AND de.entity_id=?)")
+            args.append(entity_id)
+        return self.conn.execute(query, args).fetchone()[0]
 
     def add_review(self, doc_id: str, verdict: str, note: str = "", ts: str = "", kind: str = "qc",
                    actor: str = "", *, commit: bool = True) -> None:

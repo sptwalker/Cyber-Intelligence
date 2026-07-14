@@ -177,10 +177,19 @@ def ask(store, question: str, *, use_claude: Optional[bool] = None) -> dict:
 
 
 # --- 诉求→产品需求闭环（半自动，产建议清单供人工确认，不自动建工单）---
-def backlog(store, self_entities: Optional[set] = None) -> list[dict]:
+def backlog(
+    store, self_entities: Optional[set] = None, *, since_day: str | None = None,
+) -> list[dict]:
     """把 Bug/投诉/功能诉求 按 类型×话题 聚成结构化需求条目，按声量×热度降序。"""
     groups: dict[tuple, dict] = {}
-    for r in _self_rows(store, self_entities):
+    rows = _self_rows(store, self_entities)
+    if since_day:
+        from .analytics import normalize_day
+        rows = [
+            row for row in rows
+            if normalize_day(row.get("publish_ts"), row.get("fetched_at")) >= since_day
+        ]
+    for r in rows:
         sig = json.loads(r["signals"] or "{}")
         kind = ("Bug" if sig.get("bug") else "功能诉求" if sig.get("feature_request")
                 else "投诉" if r["is_complaint"] else None)

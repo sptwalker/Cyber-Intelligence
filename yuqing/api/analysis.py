@@ -8,7 +8,7 @@ from typing import Any
 from .. import analytics
 from ..report import aggregate
 from .collection import latest_platform_runs
-from .overview import RANGES, filter_range, resolve_entity
+from .overview import RANGES, cutoff_day, filter_range, resolve_entity
 from .responses import APIError
 
 
@@ -17,11 +17,12 @@ def build_analysis(store, watch: dict, *, entity_id: str | None = None,
     if range_name not in RANGES:
         raise APIError("INVALID_PARAMETER", "参数 range 仅支持：7d、30d、90d")
     resolved_id, entity_name = resolve_entity(watch, entity_id)
-    metrics = aggregate(store, resolved_id)
-    aspects = analytics.aspect_breakdown(store, resolved_id)
+    since_day = cutoff_day(RANGES[range_name])
+    metrics = aggregate(store, resolved_id, since_day=since_day)
+    aspects = analytics.aspect_breakdown(store, resolved_id, since_day=since_day)
     daily = filter_range(analytics.daily_series(store, resolved_id), RANGES[range_name])
     bhi = filter_range(analytics.bhi_trend(store, resolved_id), RANGES[range_name])
-    semantic_topics = analytics.semantic_topics(store, resolved_id)[:8]
+    semantic_topics = analytics.semantic_topics(store, resolved_id, since_day=since_day)[:8]
     platforms = [str(item) for item in (watch.get("platforms") or [])]
     _, quality, quality_notes = latest_platform_runs(store, resolved_id, platforms)
 
@@ -42,7 +43,7 @@ def build_analysis(store, watch: dict, *, entity_id: str | None = None,
     data = {
         "entity": {"id": resolved_id, "name": entity_name},
         "range": range_name,
-        "metrics_scope": "all_available",
+        "metrics_scope": range_name,
         "sample": {
             "count": sample_count,
             "confidence": confidence,

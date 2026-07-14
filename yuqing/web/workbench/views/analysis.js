@@ -14,9 +14,7 @@ function renderAnalysisPeriodPills(){
 
 function setAnalysisPeriod(period){
   state.analysisPeriod = period;
-  state.analysis.range = analysisRangeForPeriod(period);
-  state.analysis.status = 'idle';
-  renderAnalysisView();
+  changeGlobalRange(analysisRangeForPeriod(period));
 }
 
 function loadAnalysis(force){

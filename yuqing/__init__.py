@@ -21,6 +21,9 @@ for _stream in (_sys.stdout, _sys.stderr):
 def watch_path(path: str = "watch.yaml") -> str:
     """解析实际生效的 watch.yaml 路径：优先 cwd，缺则回退包内自带（与 load_watch 同源）。"""
     import os
+    configured = os.getenv("YUQING_WATCH_PATH", "").strip()
+    if configured:
+        return configured
     if os.path.exists(path):
         return path
     packaged = os.path.join(os.path.dirname(__file__), "watch.yaml")
@@ -36,5 +39,9 @@ def load_watch(path: str = "watch.yaml") -> dict:
         import yaml
     except ImportError as e:  # pragma: no cover
         raise SystemExit("需要 PyYAML：pip install pyyaml") from e
-    with open(watch_path(path), encoding="utf-8") as f:
+    import os
+    resolved = watch_path(path)
+    if not os.path.exists(resolved) and os.getenv("YUQING_WATCH_PATH"):
+        resolved = os.path.join(os.path.dirname(__file__), "watch.yaml")
+    with open(resolved, encoding="utf-8") as f:
         return yaml.safe_load(f)

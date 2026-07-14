@@ -1,21 +1,5 @@
 'use strict';
 
-/* ===================== 用户 & 导航 ===================== */
-var USERS = [
-  {id:'u1', name:'张舆情', role:'舆情监控岗', avatar:'张', color:'#1c7ed6'},
-  {id:'u2', name:'李总监', role:'运营总监', avatar:'李', color:'#e67700'},
-  {id:'u3', name:'王产品', role:'产品总监', avatar:'王', color:'#2b8a3e'}
-];
-function userById(id){
-  for(var i=0;i<USERS.length;i++){ if(USERS[i].id===id) return USERS[i]; }
-  return null;
-}
-function userChip(id){
-  var u = userById(id);
-  if(!u) return '<span class="assignee-chip muted">未分配</span>';
-  return '<span class="assignee-chip"><span class="avatar-dot" style="background:'+u.color+';">'+u.avatar+'</span>'+u.name+'</span>';
-}
-
 var VIEWS = [
   {id:'overview', group:'工作台', icon:'◆', label:'总览工作台'},
   {id:'collect', group:'工作台', icon:'⇩', label:'采集接入'},
@@ -23,1280 +7,385 @@ var VIEWS = [
   {id:'analysis', group:'分析洞察', icon:'◔', label:'情绪分析'},
   {id:'alerts', group:'分析洞察', icon:'▲', label:'预警中心'},
   {id:'backlog', group:'分析洞察', icon:'☷', label:'诉求管理'},
-  {id:'reports', group:'资产沉淀', icon:'▤', label:'报告中心', disabled:true, disabledReason:'报告接口接入中'},
-  {id:'config', group:'系统管理', icon:'⌁', label:'监控配置', disabled:true, disabledReason:'配置接口接入中'}
+  {id:'reports', group:'资产沉淀', icon:'▤', label:'报告中心'},
+  {id:'config', group:'系统管理', icon:'⌁', label:'监控配置'}
 ];
 
 var VIEW_META = {
   overview:{title:'总览 Dashboard', sub:'全平台舆情概况 · 实时更新'},
-  collect:{title:'采集接入', sub:'7 平台任务调度与关键词配置'},
-  review:{title:'数据质检工作台', sub:'人工复核 · 串味词库联动'},
-  analysis:{title:'情绪分析', sub:'ABSA 六维口碑雷达'},
+  collect:{title:'采集接入', sub:'平台健康、登录状态与跑批控制'},
+  review:{title:'数据质检工作台', sub:'人工复核 · 结论持久化'},
+  analysis:{title:'情绪分析', sub:'ABSA、话题与 BHI 趋势'},
   alerts:{title:'预警中心', sub:'P0 / P1 分级处置看板'},
-  backlog:{title:'诉求管理', sub:'用户诉求归集与产品 Roadmap 跟踪'},
+  backlog:{title:'诉求管理', sub:'用户诉求聚合与 CSV 导出'},
   reports:{title:'报告中心', sub:'确定性生成 · 查看 · 来源溯源'},
-  config:{title:'监控配置', sub:'关键词实体 · 平台开关 · 调度频率'}
+  config:{title:'监控配置', sub:'监控对象 · 平台 · 关键词 · 种子建议'}
 };
 
-/* ===================== 平台 & 采集 ===================== */
-var PLATFORM_NAMES = {weibo:'微博', douyin:'抖音', xhs:'小红书', bilibili:'B站', zhihu:'知乎', jd:'京东评价', tieba:'贴吧'};
-var PLATFORMS = [
-  {id:'weibo', name:'微博', status:'suspect', lastRun:'09:12', volume:186, cron:'每 30 分钟'},
-  {id:'douyin', name:'抖音', status:'ok', lastRun:'09:20', volume:342, cron:'每 30 分钟'},
-  {id:'xhs', name:'小红书', status:'ok', lastRun:'09:15', volume:271, cron:'每 1 小时'},
-  {id:'bilibili', name:'B站', status:'ok', lastRun:'09:00', volume:98, cron:'每 2 小时'},
-  {id:'zhihu', name:'知乎', status:'ok', lastRun:'08:40', volume:41, cron:'每 4 小时'},
-  {id:'jd', name:'京东评价', status:'ok', lastRun:'07:30', volume:63, cron:'每 6 小时'},
-  {id:'tieba', name:'贴吧', status:'fail', lastRun:'昨日 23:10', volume:0, cron:'每 1 小时'}
-];
-var COLLECT_TASKS = PLATFORMS.map(function(p){
-  return {id:p.id, name:p.name, status:p.status, lastRun:p.lastRun, volume:p.volume, cron:p.cron};
-});
+function $(selector){ return document.querySelector(selector); }
+function $all(selector){ return Array.prototype.slice.call(document.querySelectorAll(selector)); }
 
-var ENTITIES = [
-  {id:'youdoo', name:'Youdoo Box', aliases:['优度盒子','Youdoo','优度掌机'], mustNot:['优度日化','有度科技'], crisisBoost:['自燃','爆炸','起火','猝死']}
-];
-
-/* ===================== 情绪分析 ABSA ===================== */
-var ABSA_DIMS = ['硬件质量','系统体验','游戏兼容','售后服务','价格','物流'];
-var ABSA_DATA = {
-  week: [
-    {dim:'硬件质量', pos:214, neg:132, net:0.24, quote:'拆解发现这代散热鳍片密度提升了 30%，实测满载壳温 41.2℃'},
-    {dim:'系统体验', pos:188, neg:96, net:0.32, quote:'系统流畅度比上一代好很多，几乎没有卡顿'},
-    {dim:'游戏兼容', pos:241, neg:58, net:0.61, quote:'兼容性比想象中好，主流大作都能跑'},
-    {dim:'售后服务', pos:79, neg:203, net:-0.44, quote:'退款流程走了两周还没到账，客服态度也一般'},
-    {dim:'价格', pos:196, neg:87, net:0.38, quote:'性价比属实能打，999 的价格没踩雷'},
-    {dim:'物流', pos:132, neg:41, net:0.53, quote:'物流很快，包装完好'}
-  ],
-  month: [
-    {dim:'硬件质量', pos:820, neg:512, net:0.23, quote:'发热问题在 618 期间集中反馈，官方已推送优化补丁'},
-    {dim:'系统体验', pos:701, neg:389, net:0.29, quote:'系统更新后卡顿明显减少'},
-    {dim:'游戏兼容', pos:912, neg:203, net:0.64, quote:'主流模拟器兼容性持续提升'},
-    {dim:'售后服务', pos:301, neg:744, net:-0.42, quote:'售后响应慢是本月最集中的负面诉求'},
-    {dim:'价格', pos:688, neg:301, net:0.39, quote:'618 期间价格战导致部分用户觉得买贵了'},
-    {dim:'物流', pos:512, neg:150, net:0.55, quote:'大促期间物流时效仍保持稳定'}
-  ],
-  quarter: [
-    {dim:'硬件质量', pos:2410, neg:1602, net:0.20, quote:'季度内散热相关投诉环比下降 12%'},
-    {dim:'系统体验', pos:2103, neg:1150, net:0.29, quote:'系统体验净情绪分季度内持续上升'},
-    {dim:'游戏兼容', pos:2802, neg:640, net:0.63, quote:'游戏兼容维度全季度保持最高净情绪分'},
-    {dim:'售后服务', pos:980, neg:2231, net:-0.39, quote:'售后服务连续三个月为唯一负净情绪维度'},
-    {dim:'价格', pos:2011, neg:980, net:0.34, quote:'价格维度情绪波动与促销节奏高度相关'},
-    {dim:'物流', pos:1602, neg:490, net:0.53, quote:'物流维度全季度稳定在正净情绪区间'}
-  ]
-};
-var WORDCLOUD = [
-  {word:'发热', count:186}, {word:'退款慢', count:142}, {word:'性价比', count:121},
-  {word:'兼容性', count:98}, {word:'客服态度', count:76}
-];
-var BHI_TREND = [
-  {date:'07-03', score:71}, {date:'07-04', score:69}, {date:'07-05', score:73},
-  {date:'07-06', score:68}, {date:'07-07', score:64}, {date:'07-08', score:60}, {date:'07-09', score:58}
-];
-var SENTIMENT_TREND = [
-  {date:'07-03', pos:120, neg:74, neu:96},
-  {date:'07-04', pos:132, neg:82, neu:108},
-  {date:'07-05', pos:118, neg:71, neu:101},
-  {date:'07-06', pos:145, neg:98, neu:116},
-  {date:'07-07', pos:151, neg:126, neu:122},
-  {date:'07-08', pos:168, neg:154, neu:136},
-  {date:'07-09', pos:176, neg:171, neu:149}
-];
-/* ===================== 预警中心 ===================== */
-var RESPONSE_TEMPLATES = {
-  '发热投诉':'关于近期反馈的设备发热问题，我们已第一时间成立专项小组排查。经初步检测，属于高负载场景下的正常温控现象，但为进一步提升体验，将于本周内推送系统级散热优化补丁。对于已产生使用困扰的用户，我们提供免费上门检测与优先换新服务，客服将在 24 小时内主动联系。感谢大家的信任与监督。',
-  '价格争议':'针对近期价格波动引发的用户疑问，我们说明如下：本次调整为促销周期结束后的常规价格回调，所有正式售价均在官方渠道公示，不存在临时抬价行为。对于活动期间下单的用户，我们承诺价保 15 天，差价可申请补偿。',
-  '功能缺陷':'我们已确认相关功能异常问题，技术团队正在加急修复，预计将于近期版本更新中同步上线。给您带来的不便深表歉意，如影响正常使用，可联系客服获取过渡期解决方案。',
-  '虚假信息':'经核实，网传相关信息与事实不符，我们已保留相关证据并将通过官方渠道发布正式说明。同时呼吁广大用户理性判断，以官方公告为准，我们也将持续关注舆情动态。',
-  '默认':'我们已关注到相关反馈，正在核实具体情况，将尽快通过官方渠道给出正式回应，感谢您的耐心等待。'
-};
-
-var ALERTS = [
-  {
-    id:'AL-0091', level:'P0', title:'“Youdoo Box 疑似自燃”话题登上微博同城热搜，相关截图广泛传播',
-    platform:'weibo', triggerTime:'08:52', relatedCount:214, assigneeId:'u1', status:'pending',
-    category:'发热投诉', deadlineMin:45, responseDraft:null,
-    timeline:[
-      {time:'08:52', text:'系统监测到相关话题声量骤增，自动触发 P0 预警'},
-      {time:'08:55', text:'张舆情已认领，开始核实原始信源'},
-      {time:'09:03', text:'核实发现原图 EXIF 信息与设备型号不符，疑似张冠李戴'}
-    ],
-    sourcePosts:[
-      {platform:'微博', author:'@数码爆料前线', text:'刚收到网友投稿，某掌机疑似自燃冒烟，图片已经传疯了', time:'08:49'},
-      {platform:'微博', author:'@吃瓜不嫌事大', text:'转发上面这条，希望官方尽快回应！', time:'08:56'}
-    ]
-  },
-  {
-    id:'AL-0088', level:'P0', title:'第三方评测号发布《Youdoo Box 618 大促价格猫腻》长文，播放量破 50 万',
-    platform:'douyin', triggerTime:'07:40', relatedCount:167, assigneeId:'u2', status:'processing',
-    category:'价格争议', deadlineMin:110, responseDraft:'针对近期价格波动引发的用户疑问，我们说明如下：本次调整为促销周期结束后的常规价格回调，所有正式售价均在官方渠道公示。',
-    timeline:[
-      {time:'07:40', text:'系统监测到抖音视频声量异常，自动触发 P0 预警'},
-      {time:'07:52', text:'李总监已认领，安排产品团队核对价格策略记录'},
-      {time:'08:30', text:'口径草稿已生成，等待最终确认'}
-    ],
-    sourcePosts:[
-      {platform:'抖音', author:'数码评测老白', text:'618 前一天偷偷涨价 100，第二天打个折忽悠大家，这套路我熟', time:'07:38'}
-    ]
-  },
-  {
-    id:'AL-0093', level:'P1', title:'小红书出现多条“退款流程超时”笔记，24 小时内新增 38 条相关内容',
-    platform:'xhs', triggerTime:'09:05', relatedCount:38, assigneeId:'u1', status:'pending',
-    category:'功能缺陷', deadlineMin:240, responseDraft:null,
-    timeline:[
-      {time:'09:05', text:'系统监测到关键词“退款”声量环比上升 210%，自动触发 P1 预警'}
-    ],
-    sourcePosts:[
-      {platform:'小红书', author:'糖糖爱游戏', text:'退货三次官方客服都不给回复', time:'09:19'},
-      {platform:'小红书', author:'开箱不吃亏', text:'退款走了快三周了，谁在处理啊', time:'08:47'}
-    ]
-  },
-  {
-    id:'AL-0085', level:'P1', title:'知乎问题“如何看待 Youdoo Box 系统更新后频繁死机”获赞量快速上升',
-    platform:'zhihu', triggerTime:'昨日 21:14', relatedCount:52, assigneeId:'u3', status:'confirm',
-    category:'功能缺陷', deadlineMin:900, responseDraft:'我们已确认相关功能异常问题，技术团队正在加急修复，预计将于近期版本更新中同步上线。',
-    timeline:[
-      {time:'昨日 21:14', text:'系统监测到知乎问题热度异常，自动触发 P1 预警'},
-      {time:'昨日 22:30', text:'王产品已认领，确认为系统更新引入的已知 Bug'},
-      {time:'今日 08:10', text:'口径已生成并提交确认，等待发布'}
-    ],
-    sourcePosts:[
-      {platform:'知乎', author:'知乎-数码搬运工', text:'更新到最新系统后死机频率明显变高，求解', time:'昨日 21:10'}
-    ]
-  },
-  {
-    id:'AL-0079', level:'P1', title:'贴吧“掌机吧”出现关于开机黑屏问题的集中讨论帖',
-    platform:'tieba', triggerTime:'前日 15:22', relatedCount:29, assigneeId:'u1', status:'archived',
-    category:'功能缺陷', deadlineMin:0, responseDraft:'该问题已在 v2.3.1 版本更新中修复，感谢用户反馈。',
-    timeline:[
-      {time:'前日 15:22', text:'系统监测到相关讨论帖聚集，自动触发 P1 预警'},
-      {time:'前日 16:40', text:'张舆情核实为已知固件问题，已提交技术团队'},
-      {time:'昨日 10:00', text:'v2.3.1 版本发布修复补丁，口径确认并归档'}
-    ],
-    sourcePosts:[
-      {platform:'贴吧', author:'掌机吧-老玩家', text:'开机黑屏三次才好，是不是我买到瑕疵品了', time:'前日 15:20'}
-    ]
-  }
-];
-
-var COOLDOWN_EVENTS = [
-  {id:'AL-0079', title:'贴吧开机黑屏集中讨论', closedAt:'昨日 10:00', resolution:'v2.3.1 版本修复补丁已发布，口径确认并归档'},
-  {id:'AL-0061', title:'B站《掌机横评》视频负面观点扩散', closedAt:'3 天前', resolution:'官方评论区置顶说明后声量回落，标记为已处理'},
-  {id:'AL-0054', title:'京东评价区集中出现“物流破损”反馈', closedAt:'5 天前', resolution:'联系物流方加强包装规范，投诉量下降 80%'}
-];
-
-/* ===================== 报告中心 ===================== */
-var SOURCE_DOCS = {
-  'D-101':{title:'微博话题《Youdoo Box 疑似自燃》原始信源核查记录', excerpt:'经 EXIF 与设备序列号核对，原图与官方设备型号不符，疑似旧机型故障图片被移花接木。'},
-  'D-102':{title:'618 价格策略执行记录', excerpt:'6 月 14 日至 6 月 18 日执行大促价，6 月 19 日起恢复常规价，所有价格均在官网公示。'},
-  'D-103':{title:'退款流程 SLA 复核报告', excerpt:'本期退款平均处理时长 9.2 天，超出承诺时效 3-5 工作日，主因客服排班不足。'},
-  'D-104':{title:'ABSA 六维情绪周度统计原始数据', excerpt:'售后服务维度净情绪分本周 -0.44，为六维中唯一负值维度，环比走低 0.06。'},
-  'D-105':{title:'全平台声量与情绪极性周度汇总表', excerpt:'本周全平台合计新增声量 5824 条，正面占比 58.6%，负面占比 26.1%，中性占比 15.3%。'}
-};
-
-var REPORTS = [
-  {
-    id:'RPT-2026W29', period:'2026 年第 29 周（07-06 ~ 07-12）', status:'draft',
-    author:'张舆情', reviewer:'李总监', submittedAt:null, reviewedAt:null, pushedAt:null, reviewNote:'',
-    content:[
-      {text:'本周品牌健康指数 BHI 环比下降 13 点，主要受“疑似自燃”话题与售后时效争议影响。', cite:'D-101'},
-      {text:'售后服务维度净情绪分 -0.44，为六维中唯一负值，退款平均处理时长 9.2 天，超出承诺时效。', cite:'D-103'},
-      {text:'ABSA 数据显示游戏兼容维度持续保持最高净情绪分 0.61，是当前口碑最稳固的优势维度。', cite:'D-104'},
-      {text:'全平台合计新增声量 5824 条，正面占比 58.6%，负面占比 26.1%，整体舆情结构基本健康。', cite:'D-105'}
-    ]
-  },
-  {
-    id:'RPT-2026W28', period:'2026 年第 28 周（06-29 ~ 07-05）', status:'pending',
-    author:'张舆情', reviewer:'李总监', submittedAt:'07-06 09:30', reviewedAt:null, pushedAt:null, reviewNote:'',
-    content:[
-      {text:'本周 618 大促收官，价格争议类话题声量环比上升 40%，已核实为常规价格回调被误读。', cite:'D-102'},
-      {text:'整体正面声量占比 58.6%，环比提升 4.2 个百分点，主要得益于游戏兼容性口碑扩散。', cite:'D-104'}
-    ]
-  },
-  {
-    id:'RPT-2026W27', period:'2026 年第 27 周（06-22 ~ 06-28）', status:'published',
-    author:'张舆情', reviewer:'李总监', submittedAt:'06-29 09:12', reviewedAt:'06-29 14:20', pushedAt:'06-29 14:25',
-    reviewNote:'内容核实充分，同意发布。',
-    content:[
-      {text:'本周未出现 P0 级预警事件，舆情整体平稳，BHI 维持在 71-73 区间。', cite:'D-104'},
-      {text:'售后服务负面声量已连续两周上升，建议产品团队关注退款流程效率问题。', cite:'D-103'}
-    ]
-  }
-];
-
-var BOSS_DAILY = [
-  {date:'今日 09:00', text:'今日舆情：1 个 P0 预警处理中（疑似自燃话题，已核实为不实信息），售后时效仍是本周主要负面来源。'},
-  {date:'昨日 09:00', text:'昨日舆情：整体平稳，无新增 P0/P1，贴吧黑屏问题修复补丁已发布并归档。'},
-  {date:'前日 09:00', text:'前日舆情：B站掌机横评视频引发短暂负面讨论，官方置顶回应后声量回落。'}
-];
-
-var BACKLOG = [
-  {demand:'系统散热优化补丁', platform:'微博/抖音', count:186, sentiment:'负面', roadmap:'开发中', expanded:false},
-  {demand:'退款流程提速', platform:'小红书/京东', count:142, sentiment:'负面', roadmap:'评估中', expanded:false},
-  {demand:'游戏兼容性列表更新', platform:'小红书/B站', count:98, sentiment:'中性', roadmap:'已排期', expanded:false},
-  {demand:'客服响应速度提升', platform:'全平台', count:76, sentiment:'负面', roadmap:'评估中', expanded:false},
-  {demand:'物流破损率优化', platform:'京东/贴吧', count:54, sentiment:'负面', roadmap:'已排期', expanded:false}
-];
-
-/* ===================== 系统配置 ===================== */
-var PLATFORM_SCHEDULE = PLATFORMS.map(function(p){
-  return {id:p.id, name:p.name, enabled:p.status!=='fail', cron:p.cron};
-});
-var LLM_CONFIG = {model:'GPT-4o-mini（内部代理）', temperature:0.3, maxTokens:2000, promptVersion:'v3.2-舆情专用'};
-var BUDGET = {used:1862, total:5000, unit:'元 / 月'};
-var FEISHU = {webhook:'https://open.feishu.cn/open-apis/bot/v2/hook/xxxx-xxxx-xxxx', enabled:true, lastPush:'今日 09:12'};
-
-/* ===================== 舆情知识库 ===================== */
-var KB_CATEGORIES = [
-  {key:'口径', label:'📋 应对口径'},
-  {key:'模板', label:'📊 分析模板'},
-  {key:'案例', label:'📁 历史案例', subs:['发热投诉','价格争议','功能缺陷']},
-  {key:'串味', label:'🚫 串味词库'}
-];
-
-var KNOWLEDGE = [
-  {id:'K001', category:'口径', subcategory:'', title:'发热投诉标准应对口径 v3', content:RESPONSE_TEMPLATES['发热投诉'], refCount:12, updatedAt:'07-09 09:10', status:'正常'},
-  {id:'K002', category:'口径', subcategory:'', title:'价格争议标准应对口径 v2', content:RESPONSE_TEMPLATES['价格争议'], refCount:8, updatedAt:'07-08 16:20', status:'正常'},
-  {id:'K003', category:'口径', subcategory:'', title:'功能缺陷标准应对口径 v2', content:RESPONSE_TEMPLATES['功能缺陷'], refCount:5, updatedAt:'06-29 10:00', status:'正常'},
-  {id:'K004', category:'模板', subcategory:'', title:'周报撰写模板（含引用规范）', content:'一、本周舆情总览（BHI 变化 + 归因）\n二、ABSA 六维明细（含代表性原文引用）\n三、预警事件复盘\n四、诉求 Backlog 更新\n五、下周关注重点', refCount:9, updatedAt:'06-20 11:00', status:'正常'},
-  {id:'K005', category:'模板', subcategory:'', title:'ABSA 六维分析模板', content:'硬件质量 / 系统体验 / 游戏兼容 / 售后服务 / 价格 / 物流 —— 每维度需包含：正面数、负面数、净情绪分、代表性原文、环比变化。', refCount:14, updatedAt:'05-15 09:30', status:'正常'},
-  {id:'K006', category:'案例', subcategory:'发热投诉', title:'2026-06 发热投诉集中爆发案例复盘', content:'6 月大促期间因高负载使用场景增多，发热类投诉环比上升 65%。处置：24 小时内发布系统级说明，48 小时内推送优化补丁，投诉量 5 天内回落至正常水平。', refCount:6, updatedAt:'06-10 14:00', status:'正常'},
-  {id:'K007', category:'案例', subcategory:'价格争议', title:'2026 年 618 价格争议案例复盘', content:'大促结束后价格回调被第三方评测号解读为“价格猫腻”，核实为常规价格策略。处置：产品团队出具价格执行记录，运营总监审核后统一口径回应。', refCount:4, updatedAt:'07-08 16:20', status:'需更新'},
-  {id:'K008', category:'案例', subcategory:'功能缺陷', title:'v2.3.1 黑屏问题修复案例复盘', content:'贴吧集中反馈开机黑屏问题，核实为固件已知 Bug，v2.3.1 版本修复后归档。', refCount:3, updatedAt:'06-01 10:00', status:'已过期'},
-  {id:'K009', category:'串味', subcategory:'', title:'串味词库：优度日化 / 有度科技', content:'“优度日化”“有度科技”等企业与本品牌“Youdoo / 优度盒子”无关联，抓取到相关内容需人工复核后按串味处理，不计入舆情统计。', refCount:7, updatedAt:'07-09 09:19', status:'正常'},
-  {id:'K011', category:'口径', subcategory:'', title:'虚假信息辟谣标准应对口径 v1', content:RESPONSE_TEMPLATES['虚假信息'], refCount:3, updatedAt:'07-09 08:30', status:'正常'},
-  {id:'K012', category:'模板', subcategory:'', title:'日报撰写模板', content:'一句话总结当日舆情态势 + 关键数字 + P0/P1 事件处置进展，全文控制在 80 字以内。', refCount:11, updatedAt:'06-18 09:00', status:'正常'}
-];
-var STAT_SPARK_BHI = [71,69,73,68,64,60,58];
-var STAT_SPARK_VOL = [820,910,860,940,1010,1080,1103];
-var STAT_SPARK_NEG = [12,14,11,16,18,21,19];
-var STAT_SPARK_ALERT = [1,0,1,0,1,2,2];
-
-/* ===================== 通用工具函数 ===================== */
-function $(sel){ return document.querySelector(sel); }
-function $all(sel){ return Array.prototype.slice.call(document.querySelectorAll(sel)); }
-function esc(str){
-  if(str===null||str===undefined) return '';
-  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+function esc(value){
+  if(value===null || value===undefined) return '';
+  return String(value)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
-function highlightText(str, kw){
-  str = esc(str);
-  if(!kw) return str;
-  var kwEsc = esc(kw);
-  var lowerStr = str.toLowerCase();
-  var lowerKw = kwEsc.toLowerCase();
-  var idx = lowerStr.indexOf(lowerKw);
-  if(idx===-1) return str;
-  var out = '';
-  var cursor = 0;
-  while(idx!==-1){
-    out += str.substring(cursor, idx);
-    out += '<mark>' + str.substring(idx, idx+kwEsc.length) + '</mark>';
-    cursor = idx + kwEsc.length;
-    idx = lowerStr.indexOf(lowerKw, cursor);
-  }
-  out += str.substring(cursor);
-  return out;
+
+function showToast(message, kind){
+  var container = $('#toastContainer');
+  if(!container) return;
+  var element = document.createElement('div');
+  element.className = 'toast' + (kind==='green'?' toast-green':kind==='red'?' toast-red':'');
+  element.textContent = message;
+  container.appendChild(element);
+  setTimeout(function(){ if(element.parentNode) element.parentNode.removeChild(element); }, 3000);
 }
-function showToast(msg, kind){
-  var c = $('#toastContainer');
-  var el = document.createElement('div');
-  el.className = 'toast' + (kind==='green' ? ' toast-green' : kind==='red' ? ' toast-red' : '');
-  el.textContent = msg;
-  c.appendChild(el);
-  setTimeout(function(){
-    if(el.parentNode) el.parentNode.removeChild(el);
-  }, 3000);
-}
-function polarityBadge(p){
-  if(p==='pos') return '<span class="badge badge-green">正面</span>';
-  if(p==='neg') return '<span class="badge badge-red">负面</span>';
+
+function polarityBadge(polarity){
+  if(polarity==='pos') return '<span class="badge badge-green">正面</span>';
+  if(polarity==='neg') return '<span class="badge badge-red">负面</span>';
   return '<span class="badge badge-gray">中性</span>';
 }
-function typeBadge(t){
-  var map = {normal:'常规', irony:'反讽', shuijun:'水军', chuanwei:'串味'};
-  var cls = {normal:'badge-outline', irony:'badge-amber', shuijun:'badge-red', chuanwei:'badge-amber'};
-  return '<span class="badge ' + (cls[t]||'badge-gray') + '">' + (map[t]||t) + '</span>';
+
+function levelBadge(level){
+  return level==='P0'
+    ? '<span class="badge badge-red">P0 危机</span>'
+    : '<span class="badge badge-amber">P1 跟进</span>';
 }
-function levelBadge(lv){
-  if(lv==='P0') return '<span class="badge badge-red">P0 危机</span>';
-  return '<span class="badge badge-amber">P1 跟进</span>';
-}
-function statusBadge(s){
+
+function statusBadge(status){
   var map = {pending:['待复核','badge-blue'], approved:['已通过','badge-green'], rejected:['已拒绝','badge-red']};
-  var v = map[s] || ['未知','badge-gray'];
-  return '<span class="badge ' + v[1] + '">' + v[0] + '</span>';
+  var value = map[status] || ['未知','badge-gray'];
+  return '<span class="badge ' + value[1] + '">' + value[0] + '</span>';
 }
-function statusBadgeAlert(s){
-  var map = {pending:['待处置','badge-blue'], processing:['处理中','badge-amber'], confirm:['待确认','badge-outline'], archived:['已归档','badge-gray']};
-  var v = map[s] || ['未知','badge-gray'];
-  return '<span class="badge ' + v[1] + '">' + v[0] + '</span>';
-}
-function reportStatusBadge(s){
-  var map = {draft:['草稿','badge-gray'], pending:['待审核','badge-amber'], published:['已发布','badge-green']};
-  var v = map[s] || ['未知','badge-gray'];
-  return '<span class="badge ' + v[1] + '">' + v[0] + '</span>';
-}
-function kbStatusBadge(s){
-  var map = {'正常':'badge-green', '已过期':'badge-gray', '需更新':'badge-amber'};
-  return '<span class="badge ' + (map[s]||'badge-gray') + '">' + s + '</span>';
-}
+
 function healthDot(status){
   var cls = status==='ok' ? 'ok' : status==='suspect' ? 'suspect' : 'fail';
   return '<span class="health-dot ' + cls + '"></span>';
 }
-function confColor(c){
-  if(c>0.8) return 'var(--green)';
-  if(c>0.5) return 'var(--amber)';
+
+function confColor(confidence){
+  if(confidence>0.8) return 'var(--green)';
+  if(confidence>0.5) return 'var(--amber)';
   return 'var(--red)';
 }
-/* ===================== SVG 图表构造 ===================== */
-function buildLineChart(data, keyX, keyY, color, w, h){
-  w = w || 560; h = h || 160;
+
+function buildLineChart(data, keyX, keyY, color, width, height){
+  width = width || 560;
+  height = height || 160;
+  if(!data || !data.length) return '';
   var pad = 28;
-  var vals = data.map(function(d){ return d[keyY]; });
-  var min = Math.min.apply(null, vals);
-  var max = Math.max.apply(null, vals);
-  if(min===max){ min -= 1; max += 1; }
-  var stepX = (w - pad*2) / (data.length - 1);
-  var pts = data.map(function(d,i){
-    var x = pad + i*stepX;
-    var y = h - pad - ((d[keyY]-min)/(max-min))*(h-pad*2);
-    return {x:x, y:y, label:d[keyX], val:d[keyY]};
-  });
-  var pathD = pts.map(function(p,i){ return (i===0?'M':'L') + p.x.toFixed(1) + ',' + p.y.toFixed(1); }).join(' ');
-  var areaD = pathD + ' L' + pts[pts.length-1].x.toFixed(1) + ',' + (h-pad) + ' L' + pts[0].x.toFixed(1) + ',' + (h-pad) + ' Z';
-  var svg = '<svg width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '">';
-  svg += '<path d="' + areaD + '" fill="' + color + '" opacity="0.08"></path>';
-  svg += '<path d="' + pathD + '" fill="none" stroke="' + color + '" stroke-width="2.5"></path>';
-  for(var i=0;i<pts.length;i++){
-    svg += '<circle cx="' + pts[i].x.toFixed(1) + '" cy="' + pts[i].y.toFixed(1) + '" r="3.2" fill="' + color + '"></circle>';
-    svg += '<text x="' + pts[i].x.toFixed(1) + '" y="' + (h-6) + '" font-size="10" fill="#495057" text-anchor="middle">' + esc(pts[i].label) + '</text>';
-    svg += '<text x="' + pts[i].x.toFixed(1) + '" y="' + (pts[i].y-8).toFixed(1) + '" font-size="10" fill="' + color + '" text-anchor="middle" font-weight="700">' + pts[i].val + '</text>';
-  }
-  svg += '</svg>';
-  return svg;
-}
-function buildSparkline(vals, color, w, h){
-  w = w || 96; h = h || 28;
-  var min = Math.min.apply(null, vals);
-  var max = Math.max.apply(null, vals);
-  if(min===max){ min -= 1; max += 1; }
-  var stepX = w / (vals.length - 1);
-  var pts = vals.map(function(v,i){
-    var x = i*stepX;
-    var y = h - ((v-min)/(max-min))*h;
-    return {x:x, y:y};
-  });
-  var pathD = pts.map(function(p,i){ return (i===0?'M':'L') + p.x.toFixed(1) + ',' + p.y.toFixed(1); }).join(' ');
-  var svg = '<svg width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '">';
-  svg += '<path d="' + pathD + '" fill="none" stroke="' + color + '" stroke-width="2"></path>';
-  var last = pts[pts.length-1];
-  svg += '<circle cx="' + last.x.toFixed(1) + '" cy="' + last.y.toFixed(1) + '" r="2.4" fill="' + color + '"></circle>';
-  svg += '</svg>';
-  return svg;
-}
-function buildMultiLineChart(data, series, w, h){
-  w = w || 620; h = h || 220;
-  var padL = 38, padR = 16, padT = 16, padB = 30;
-  var values = [];
-  for(var si=0;si<series.length;si++){
-    for(var di=0;di<data.length;di++) values.push(data[di][series[si].key]);
-  }
+  var values = data.map(function(item){return Number(item[keyY]) || 0;});
+  var min = Math.min.apply(null, values);
   var max = Math.max.apply(null, values);
-  max = Math.ceil(max/50)*50 || 50;
-  var plotW = w-padL-padR, plotH = h-padT-padB;
-  var stepX = plotW/(data.length-1);
-  var svg = '<svg width="100%" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '" role="img" aria-label="近七日正面、负面与中性舆情趋势">';
-  for(var gi=0;gi<=4;gi++){
-    var gy = padT + plotH*gi/4;
-    var gv = Math.round(max*(1-gi/4));
-    svg += '<line x1="' + padL + '" y1="' + gy.toFixed(1) + '" x2="' + (w-padR) + '" y2="' + gy.toFixed(1) + '" stroke="#e9ecef" stroke-width="1"></line>';
-    svg += '<text x="' + (padL-7) + '" y="' + (gy+3).toFixed(1) + '" font-size="10" fill="#868e96" text-anchor="end">' + gv + '</text>';
-  }
-  for(si=0;si<series.length;si++){
-    var item = series[si];
-    var pts = [];
-    for(di=0;di<data.length;di++){
-      pts.push({x:padL+di*stepX, y:padT+plotH-(data[di][item.key]/max)*plotH, value:data[di][item.key]});
-    }
-    var pathD = pts.map(function(p,i){ return (i===0?'M':'L') + p.x.toFixed(1) + ',' + p.y.toFixed(1); }).join(' ');
-    svg += '<path d="' + pathD + '" fill="none" stroke="' + item.color + '" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"></path>';
-    for(var pi=0;pi<pts.length;pi++) svg += '<circle cx="' + pts[pi].x.toFixed(1) + '" cy="' + pts[pi].y.toFixed(1) + '" r="3" fill="#fff" stroke="' + item.color + '" stroke-width="2"><title>' + esc(item.name) + ' ' + pts[pi].value + '</title></circle>';
-  }
-  for(di=0;di<data.length;di++) svg += '<text x="' + (padL+di*stepX).toFixed(1) + '" y="' + (h-8) + '" font-size="10" fill="#495057" text-anchor="middle">' + esc(data[di].date) + '</text>';
-  svg += '</svg>';
-  return svg;
-}
-function buildDonutChart(data, w, h){
-  w = w || 320; h = h || 220;
-  var cx = 82, cy = h/2, radius = 62, stroke = 22;
-  var colors = ['#06b6d4','#8b5cf6','#ec4899','#f97316','#10b981','#3b82f6','#eab308'];
-  var total = data.reduce(function(sum,d){ return sum+d.value; },0) || 1;
-  var circumference = Math.PI*2*radius;
-  var offset = 0;
-  var svg = '<svg width="100%" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '" role="img" aria-label="平台声量分布">';
-  svg += '<circle cx="' + cx + '" cy="' + cy + '" r="' + radius + '" fill="none" stroke="#f1f3f5" stroke-width="' + stroke + '"></circle>';
-  for(var i=0;i<data.length;i++){
-    var len = data[i].value/total*circumference;
-    svg += '<circle cx="' + cx + '" cy="' + cy + '" r="' + radius + '" fill="none" stroke="' + colors[i%colors.length] + '" stroke-width="' + stroke + '" stroke-dasharray="' + len.toFixed(2) + ' ' + (circumference-len).toFixed(2) + '" stroke-dashoffset="' + (-offset).toFixed(2) + '" transform="rotate(-90 ' + cx + ' ' + cy + ')"><title>' + esc(data[i].name) + ' ' + data[i].value + '</title></circle>';
-    offset += len;
-  }
-  svg += '<text x="' + cx + '" y="' + (cy-2) + '" text-anchor="middle" font-size="24" font-weight="800" fill="#111">' + total + '</text>';
-  svg += '<text x="' + cx + '" y="' + (cy+17) + '" text-anchor="middle" font-size="10.5" fill="#868e96">今日总声量</text>';
-  var legendX = 164, legendY = 36;
-  for(i=0;i<data.length;i++){
-    var ly = legendY+i*23;
-    svg += '<circle cx="' + legendX + '" cy="' + ly + '" r="4" fill="' + colors[i%colors.length] + '"></circle>';
-    svg += '<text x="' + (legendX+9) + '" y="' + (ly+4) + '" font-size="10.5" fill="#495057">' + esc(data[i].name) + ' ' + data[i].value + '</text>';
-    var healthColor = data[i].status==='ok' ? '#2b8a3e' : data[i].status==='suspect' ? '#e67700' : '#c92a2a';
-    svg += '<circle cx="302" cy="' + ly + '" r="3.5" fill="' + healthColor + '"><title>采集状态</title></circle>';
-  }
-  svg += '</svg>';
-  return svg;
-}
-function buildRadarChart(dims, series, w, h){
-  w = w || 340; h = h || 340;
-  var cx = w/2, cy = h/2, r = Math.min(w,h)/2 - 46;
-  var n = dims.length;
-  var maxVal = 1;
-  var angleFor = function(i){ return (Math.PI*2*i/n) - Math.PI/2; };
-  var svg = '<svg width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '">';
-  var rings = [0.25,0.5,0.75,1];
-  for(var ri=0;ri<rings.length;ri++){
-    var ringPts = [];
-    for(var i=0;i<n;i++){
-      var a = angleFor(i);
-      ringPts.push((cx + Math.cos(a)*r*rings[ri]).toFixed(1) + ',' + (cy + Math.sin(a)*r*rings[ri]).toFixed(1));
-    }
-    svg += '<polygon points="' + ringPts.join(' ') + '" fill="none" stroke="#e9ecef" stroke-width="1"></polygon>';
-  }
-  for(i=0;i<n;i++){
-    var a2 = angleFor(i);
-    var lx = cx + Math.cos(a2)*r, ly = cy + Math.sin(a2)*r;
-    svg += '<line x1="' + cx + '" y1="' + cy + '" x2="' + lx.toFixed(1) + '" y2="' + ly.toFixed(1) + '" stroke="#e9ecef" stroke-width="1"></line>';
-    var lxt = cx + Math.cos(a2)*(r+22), lyt = cy + Math.sin(a2)*(r+22);
-    svg += '<text x="' + lxt.toFixed(1) + '" y="' + lyt.toFixed(1) + '" font-size="11" fill="#495057" text-anchor="middle" dominant-baseline="middle">' + esc(dims[i]) + '</text>';
-  }
-  var pts = [];
-  for(i=0;i<n;i++){
-    var a3 = angleFor(i);
-    var norm = Math.max(0, Math.min(1, (series[i]+1)/2));
-    pts.push((cx + Math.cos(a3)*r*norm).toFixed(1) + ',' + (cy + Math.sin(a3)*r*norm).toFixed(1));
-  }
-  svg += '<polygon points="' + pts.join(' ') + '" fill="#8b5cf6" fill-opacity="0.2" stroke="#7c3aed" stroke-width="2"></polygon>';
-  for(i=0;i<n;i++){
-    var coords = pts[i].split(',');
-    svg += '<circle cx="' + coords[0] + '" cy="' + coords[1] + '" r="3.4" fill="#ec4899"></circle>';
-  }
-  svg += '</svg>';
-  return svg;
+  if(min===max){ min -= 1; max += 1; }
+  var step = (width-pad*2) / Math.max(1, data.length-1);
+  var points = data.map(function(item,index){
+    return {
+      x:data.length===1 ? width/2 : pad+index*step,
+      y:height-pad-((Number(item[keyY]) || 0)-min)/(max-min)*(height-pad*2),
+      label:item[keyX], value:item[keyY]
+    };
+  });
+  var path = points.map(function(point,index){return (index===0?'M':'L') + point.x.toFixed(1) + ',' + point.y.toFixed(1);}).join(' ');
+  var svg = '<svg width="100%" height="' + height + '" viewBox="0 0 ' + width + ' ' + height + '" role="img">';
+  svg += '<path d="' + path + '" fill="none" stroke="' + color + '" stroke-width="2.5"></path>';
+  points.forEach(function(point){
+    svg += '<circle cx="' + point.x.toFixed(1) + '" cy="' + point.y.toFixed(1) + '" r="3.2" fill="' + color + '"></circle>';
+    svg += '<text x="' + point.x.toFixed(1) + '" y="' + (height-6) + '" font-size="10" fill="#667085" text-anchor="middle">' + esc(point.label) + '</text>';
+    svg += '<text x="' + point.x.toFixed(1) + '" y="' + (point.y-8).toFixed(1) + '" font-size="10" fill="' + color + '" text-anchor="middle">' + esc(point.value) + '</text>';
+  });
+  return svg + '</svg>';
 }
 
-/* ===================== 导航渲染 ===================== */
-function pendingReviewCount(){
-  if(state.review && state.review.data && state.review.filters.status==='pending'){
-    return state.review.data.total || 0;
-  }
-  return state.overview.data ? state.overview.data.pending_review_count : 0;
+function buildSparkline(values, color, width, height){
+  width = width || 96;
+  height = height || 28;
+  if(!values || values.length<2) return '';
+  var min = Math.min.apply(null, values);
+  var max = Math.max.apply(null, values);
+  if(min===max){ min -= 1; max += 1; }
+  var step = width/(values.length-1);
+  var points = values.map(function(value,index){
+    return {x:index*step,y:height-((value-min)/(max-min))*height};
+  });
+  var path = points.map(function(point,index){return (index===0?'M':'L')+point.x.toFixed(1)+','+point.y.toFixed(1);}).join(' ');
+  var last = points[points.length-1];
+  return '<svg width="' + width + '" height="' + height + '" viewBox="0 0 ' + width + ' ' + height + '">'
+    + '<path d="' + path + '" fill="none" stroke="' + color + '" stroke-width="2"></path>'
+    + '<circle cx="' + last.x.toFixed(1) + '" cy="' + last.y.toFixed(1) + '" r="2.4" fill="' + color + '"></circle></svg>';
 }
+
+function buildMultiLineChart(data, series, width, height){
+  width = width || 620;
+  height = height || 220;
+  if(!data || !data.length) return '';
+  var padLeft=38, padRight=16, padTop=16, padBottom=30;
+  var values=[];
+  series.forEach(function(item){ data.forEach(function(row){values.push(Number(row[item.key]) || 0);}); });
+  var max=Math.max.apply(null,values);
+  max=Math.ceil(max/10)*10 || 10;
+  var plotWidth=width-padLeft-padRight, plotHeight=height-padTop-padBottom;
+  var step=plotWidth/Math.max(1,data.length-1);
+  var svg='<svg width="100%" height="' + height + '" viewBox="0 0 ' + width + ' ' + height + '" role="img">';
+  for(var grid=0;grid<=4;grid++){
+    var y=padTop+plotHeight*grid/4;
+    var label=Math.round(max*(1-grid/4));
+    svg += '<line x1="' + padLeft + '" y1="' + y.toFixed(1) + '" x2="' + (width-padRight) + '" y2="' + y.toFixed(1) + '" stroke="#e5e7eb"></line>';
+    svg += '<text x="' + (padLeft-7) + '" y="' + (y+3).toFixed(1) + '" font-size="10" fill="#98a2b3" text-anchor="end">' + label + '</text>';
+  }
+  series.forEach(function(item){
+    var points=data.map(function(row,index){
+      return {
+        x:data.length===1 ? padLeft+plotWidth/2 : padLeft+index*step,
+        y:padTop+plotHeight-(Number(row[item.key]) || 0)/max*plotHeight
+      };
+    });
+    var path=points.map(function(point,index){return (index===0?'M':'L')+point.x.toFixed(1)+','+point.y.toFixed(1);}).join(' ');
+    svg += '<path d="' + path + '" fill="none" stroke="' + item.color + '" stroke-width="2.4"></path>';
+    points.forEach(function(point){svg += '<circle cx="' + point.x.toFixed(1) + '" cy="' + point.y.toFixed(1) + '" r="3" fill="' + item.color + '"></circle>';});
+  });
+  data.forEach(function(row,index){
+    var x=data.length===1 ? padLeft+plotWidth/2 : padLeft+index*step;
+    svg += '<text x="' + x.toFixed(1) + '" y="' + (height-8) + '" font-size="10" fill="#667085" text-anchor="middle">' + esc(row.date) + '</text>';
+  });
+  return svg + '</svg>';
+}
+
+function buildRadarChart(dimensions, series, width, height){
+  width=width || 340;
+  height=height || 340;
+  if(!dimensions || !dimensions.length) return '';
+  var cx=width/2, cy=height/2, radius=Math.min(width,height)/2-46, count=dimensions.length;
+  var angle=function(index){return Math.PI*2*index/count-Math.PI/2;};
+  var svg='<svg width="100%" height="' + height + '" viewBox="0 0 ' + width + ' ' + height + '" role="img">';
+  [0.25,0.5,0.75,1].forEach(function(scale){
+    var ring=dimensions.map(function(_,index){var a=angle(index);return (cx+Math.cos(a)*radius*scale).toFixed(1)+','+(cy+Math.sin(a)*radius*scale).toFixed(1);});
+    svg += '<polygon points="' + ring.join(' ') + '" fill="none" stroke="#e5e7eb"></polygon>';
+  });
+  var points=[];
+  dimensions.forEach(function(label,index){
+    var a=angle(index), x=cx+Math.cos(a)*radius, y=cy+Math.sin(a)*radius;
+    svg += '<line x1="' + cx + '" y1="' + cy + '" x2="' + x.toFixed(1) + '" y2="' + y.toFixed(1) + '" stroke="#e5e7eb"></line>';
+    svg += '<text x="' + (cx+Math.cos(a)*(radius+22)).toFixed(1) + '" y="' + (cy+Math.sin(a)*(radius+22)).toFixed(1) + '" font-size="11" fill="#667085" text-anchor="middle" dominant-baseline="middle">' + esc(label) + '</text>';
+    var value=Number(series[index]);
+    if(!Number.isFinite(value)) value=0;
+    var normalized=Math.max(0,Math.min(1,(value+1)/2));
+    points.push((cx+Math.cos(a)*radius*normalized).toFixed(1)+','+(cy+Math.sin(a)*radius*normalized).toFixed(1));
+  });
+  svg += '<polygon points="' + points.join(' ') + '" fill="#8b5cf6" fill-opacity="0.2" stroke="#7c3aed" stroke-width="2"></polygon>';
+  return svg + '</svg>';
+}
+
+function pendingReviewCount(){
+  if(state.review.data && state.review.filters.status==='pending') return state.review.data.total || 0;
+  return state.overview.data ? state.overview.data.pending_review_count || 0 : 0;
+}
+
 function renderNav(){
-  var groups = [];
-  var groupMap = {};
-  for(var i=0;i<VIEWS.length;i++){
-    var vv = VIEWS[i];
-    if(!groupMap[vv.group]){ groupMap[vv.group] = []; groups.push(vv.group); }
-    groupMap[vv.group].push(vv);
-  }
-  var sideHtml = '';
-  for(i=0;i<groups.length;i++){
-    var g = groups[i];
-    sideHtml += '<div class="side-group"><div class="side-group-title">' + g + '</div>';
-    var items = groupMap[g];
-    for(var j=0;j<items.length;j++){
-      var it = items[j];
-      var badge = '';
-      if(it.disabled){
-        badge = '<span class="side-soon">开发中</span>';
-      }else if(it.badgeFn){
-        var n = window[it.badgeFn] ? window[it.badgeFn]() : 0;
-        if(n>0) badge = '<span class="side-badge">' + n + '</span>';
-      }
-      var disabledAttrs = it.disabled
-        ? ' disabled aria-disabled="true" title="' + esc(it.disabledReason || '功能开发中') + '"'
-        : ' onclick="switchView(\'' + it.id + '\')"';
-      sideHtml += '<button class="side-item' + (it.id===state.activeView?' active':'') + (it.disabled?' is-disabled':'')
-        + '" data-view="' + it.id + '"' + disabledAttrs + '><span class="side-icon">' + it.icon + '</span>' + it.label + badge + '</button>';
-    }
-    sideHtml += '</div>';
-  }
-  sideHtml += '<div class="sidebar-footer"><b>Youdoo Box 舆情监控</b>融合版 · 处置责任人：张舆情</div>';
-  $('#sidebar').innerHTML = sideHtml;
+  var groups=[];
+  var grouped={};
+  VIEWS.forEach(function(view){
+    if(!grouped[view.group]){ grouped[view.group]=[]; groups.push(view.group); }
+    grouped[view.group].push(view);
+  });
+  var html='';
+  groups.forEach(function(group){
+    html += '<div class="side-group"><div class="side-group-title">' + esc(group) + '</div>';
+    grouped[group].forEach(function(view){
+      var count=view.badgeFn && window[view.badgeFn] ? window[view.badgeFn]() : 0;
+      html += '<button class="side-item' + (view.id===state.activeView?' active':'') + '" data-view="' + view.id + '" onclick="switchView(\'' + view.id + '\')">'
+        + '<span class="side-icon">' + view.icon + '</span>' + esc(view.label)
+        + (count>0?'<span class="side-badge">'+count+'</span>':'') + '</button>';
+    });
+    html += '</div>';
+  });
+  html += '<div class="sidebar-footer"><b>Cyber-Intelligence</b>真实数据工作台</div>';
+  $('#sidebar').innerHTML=html;
 }
 
 function switchView(id){
-  var definition = null;
-  for(var i=0;i<VIEWS.length;i++){
-    if(VIEWS[i].id===id){ definition=VIEWS[i]; break; }
-  }
-  if(definition && definition.disabled){
-    showToast(definition.disabledReason || '功能开发中，暂不可用', 'red');
-    return;
-  }
-  if(!VIEW_META[id]) id = 'overview';
+  if(!VIEW_META[id]) id='overview';
   if(state.activeView==='collect' && id!=='collect' && window.stopCollectionPolling) stopCollectionPolling();
-  state.activeView = id;
-  $all('.view').forEach(function(v){ v.classList.remove('active'); });
-  var target = $('#view-' + id);
+  state.activeView=id;
+  $all('.view').forEach(function(view){view.classList.remove('active');});
+  var target=$('#view-'+id);
   if(target) target.classList.add('active');
-  var meta = VIEW_META[id] || {title:'', sub:''};
-  $('#viewTitle').textContent = meta.title;
-  $('#viewSubtitle').textContent = meta.sub;
+  $('#viewTitle').textContent=VIEW_META[id].title;
+  $('#viewSubtitle').textContent=VIEW_META[id].sub;
   renderNav();
   if(window.innerWidth<=960){ state.sidebarOpen=false; $('#sidebar').classList.remove('open'); }
   if(id==='overview') renderOverview();
-  if(id==='collect') renderCollectTable();
-  if(id==='review') { renderReviewFilters(); applyReviewFilters(); renderChuanweiPanel(); }
-  if(id==='analysis') renderAnalysisView();
-  if(id==='alerts') { renderAlertsKanban(); renderCooldownList(); }
-  if(id==='backlog') renderBacklogTable();
-  if(id==='reports') renderReportsTab();
-  if(id==='config') renderConfigView();
+  else if(id==='collect') renderCollectTable();
+  else if(id==='review'){ renderReviewFilters(); applyReviewFilters(); renderChuanweiPanel(); }
+  else if(id==='analysis') renderAnalysisView();
+  else if(id==='alerts'){ renderAlertsKanban(); renderCooldownList(); }
+  else if(id==='backlog') renderBacklogTable();
+  else if(id==='reports') renderReportsTab();
+  else if(id==='config') renderConfigView();
 }
+
 function toggleSidebar(){
-  state.sidebarOpen = !state.sidebarOpen;
-  $('#sidebar').classList.toggle('open', state.sidebarOpen);
+  state.sidebarOpen=!state.sidebarOpen;
+  $('#sidebar').classList.toggle('open',state.sidebarOpen);
+}
+
+function loadContext(){
+  if(state.context.status==='loading') return;
+  state.context.status='loading';
+  renderContextControls();
+  WorkbenchAPI.get('/api/v1/context',{entity_id:state.entityId},{noCache:true}).then(function(payload){
+    state.context={status:'success',data:payload.data,error:''};
+    state.entityId=payload.data.entity.id;
+    renderContextControls();
+    renderCurrentUser();
+  }).catch(function(error){
+    state.context={status:'error',data:null,error:error};
+    renderContextControls();
+  });
+}
+
+function renderContextControls(){
+  var root=$('#contextControls');
+  if(!root) return;
+  if(state.context.status==='idle'){ loadContext(); return; }
+  if(state.context.status==='loading'){ root.innerHTML='<span class="muted">正在加载筛选项…</span>'; return; }
+  if(state.context.status==='error'){ root.innerHTML='<button class="btn btn-sm" onclick="loadContext()">筛选项加载失败，重试</button>'; return; }
+  var context=state.context.data;
+  root.innerHTML='<label class="context-field"><span>监控对象</span><select id="globalEntitySelect" onchange="changeEntity(this.value)">'
+    +(context.entities || []).map(function(item){return '<option value="'+esc(item.id)+'"'+(item.id===state.entityId?' selected':'')+'>'+esc(item.name)+(item.type==='competitor'?'（竞品）':'')+'</option>';}).join('')
+    +'</select></label><label class="context-field"><span>分析范围</span><select id="globalRangeSelect" onchange="changeGlobalRange(this.value)">'
+    +(context.ranges || []).map(function(item){return '<option value="'+esc(item.value)+'"'+(item.value===state.range?' selected':'')+'>'+esc(item.label)+'</option>';}).join('')+'</select></label>';
+}
+
+function renderCurrentUser(){
+  var root=$('#currentUserChip');
+  if(!root || !state.context.data) return;
+  var user=state.context.data.user || {};
+  var name=user.name || user.open_id || '当前用户';
+  root.innerHTML='<span class="avatar-dot">'+esc(name.slice(0,1))+'</span>'+esc(name);
+}
+
+function invalidateEntityData(){
+  WorkbenchAPI.invalidate();
+  state.overview={status:'idle',data:null,meta:null,error:''};
+  state.collection={status:'idle',data:null,meta:null,error:'',mutating:false,pollTimer:null};
+  state.review.status='idle'; state.review.data=null; state.review.items=[]; state.review.nextCursor=null;
+  state.analysis.status='idle'; state.analysis.data=null;
+  state.incidents.status='idle'; state.incidents.data=null; state.incidents.active=null;
+  state.backlog.status='idle'; state.backlog.data=null;
+  state.reports.status='idle'; state.reports.data=null; state.reports.active=null; state.reports.detailStatus='idle'; state.activeReportId=null;
+  state.watch.status='idle'; state.watch.data=null; state.watch.keywords=null; state.watch.seeds=null;
+}
+
+function changeEntity(entityId){
+  if(!entityId || entityId===state.entityId) return;
+  if(state.activeView==='collect' && window.stopCollectionPolling) stopCollectionPolling();
+  state.entityId=entityId;
+  invalidateEntityData();
+  switchView(state.activeView);
+}
+
+function changeGlobalRange(range){
+  if(!range || range===state.range) return;
+  state.range=range;
+  state.analysis.range=range;
+  state.analysisPeriod=range==='30d'?'month':range==='90d'?'quarter':'week';
+  state.backlog.range=range;
+  WorkbenchAPI.invalidate('/api/v1/overview');
+  WorkbenchAPI.invalidate('/api/v1/analysis');
+  WorkbenchAPI.invalidate('/api/v1/backlog');
+  state.overview.status='idle'; state.overview.data=null;
+  state.analysis.status='idle'; state.analysis.data=null;
+  state.backlog.status='idle'; state.backlog.data=null;
+  switchView(state.activeView);
 }
 
 function renderHealthStrip(){
-  var platforms = null;
-  if(state.collection.data) platforms = state.collection.data.platforms;
-  else if(state.overview.data) platforms = state.overview.data.collection_health;
-  if(!platforms){
-    $('#healthStrip').innerHTML = '<span class="health-pill"><span class="health-dot suspect"></span>数据状态加载中</span>';
-    return;
-  }
-  var html = '';
-  for(var i=0;i<platforms.length;i++){
-    var p = platforms[i];
-    html += '<span class="health-pill">' + healthDot(p.health) + esc((window.PLATFORM_LABELS || {})[p.platform] || p.platform) + '</span>';
-  }
-  $('#healthStrip').innerHTML = html;
+  var platforms=state.collection.data ? state.collection.data.platforms : state.overview.data ? state.overview.data.collection_health : null;
+  if(!platforms){ $('#healthStrip').innerHTML='<span class="health-pill"><span class="health-dot suspect"></span>数据状态加载中</span>'; return; }
+  $('#healthStrip').innerHTML=platforms.map(function(item){
+    return '<span class="health-pill">'+healthDot(item.health)+esc((window.PLATFORM_LABELS || {})[item.platform] || item.platform)+'</span>';
+  }).join('');
 }
 
-/* ===================== 3. 数据质检工作台 ===================== */
-function renderReviewFilters(){
-  var sel = $('#filterPlatform');
-  var html = '<option value="all">全部平台</option>';
-  for(var i=0;i<PLATFORMS.length;i++){ html += '<option value="' + PLATFORMS[i].id + '">' + PLATFORMS[i].name + '</option>'; }
-  sel.innerHTML = html;
-}
-function filteredReviewItems(){
-  var status = $('#filterStatus') ? $('#filterStatus').value : 'all';
-  var platform = $('#filterPlatform') ? $('#filterPlatform').value : 'all';
-  var conf = $('#filterConf') ? $('#filterConf').value : 'all';
-  return REVIEW_QUEUE.filter(function(r){
-    if(status!=='all' && r.status!==status) return false;
-    if(platform!=='all' && r.platform!==platform) return false;
-    if(conf==='low' && r.confidence>=0.5) return false;
-    if(conf==='mid' && (r.confidence<0.5 || r.confidence>0.8)) return false;
-    if(conf==='high' && r.confidence<=0.8) return false;
-    return true;
-  });
-}
-function applyReviewFilters(){
-  renderReviewList();
-}
-function renderChuanweiPanel(){
-  var items = REVIEW_QUEUE.filter(function(r){ return r.type==='chuanwei' && r.status==='pending'; });
-  var html = '<div class="panel-title">串味样本提醒 <small>可能与本品牌无关，需人工核实后一键归入串味词库</small></div>';
-  if(!items.length){ html += '<div class="empty-hint">当前无待处理串味样本</div>'; }
-  for(var i=0;i<items.length;i++){
-    var r = items[i];
-    html += '<div class="review-card chuanwei"><div class="rc-body">';
-    html += '<div class="rc-tags">' + typeBadge(r.type) + polarityBadge(r.polarity) + '<span class="muted" style="font-size:11px;">' + PLATFORM_NAMES[r.platform] + ' · ' + r.author + ' · ' + r.time + '</span></div>';
-    html += '<div class="rc-text">' + esc(r.text) + '</div>';
-    html += '<div class="rc-actions"><button class="btn btn-amber btn-sm" onclick="flagChuanwei(\'' + r.id + '\')">✓ 确认串味并归入词库</button><button class="btn btn-sm" onclick="setActiveReviewCard(\'' + r.id + '\')">查看详情</button></div>';
-    html += '</div></div>';
-  }
-  $('#chuanweiPanel').innerHTML = html;
-}
-function flagChuanwei(id){
-  var r = null;
-  for(var i=0;i<REVIEW_QUEUE.length;i++){ if(REVIEW_QUEUE[i].id===id){ r=REVIEW_QUEUE[i]; break; } }
-  if(!r) return;
-  r.status = 'rejected';
-  var words = r.text.match(/[一-龥]{2,6}/g) || [];
-  var kw = words[0] || r.text.substring(0,6);
-  KNOWLEDGE.unshift({id:'K' + (100+KNOWLEDGE.length), category:'串味', subcategory:'', title:'串味词库：' + kw + '（来自 ' + r.id + '）', content:'样本原文：' + r.text + '\n判定：与本品牌实体无关，命中后应自动过滤，不计入舆情统计。', refCount:1, updatedAt:'刚刚', status:'正常'});
-  showToast('已归入串味词库，样本已从复核队列移除', 'green');
-  renderChuanweiPanel();
-  renderReviewList();
-  refreshReviewBadges();
-}
-function renderReviewList(){
-  var items = filteredReviewItems();
-  $('#filterResultCount').textContent = '共 ' + items.length + ' 条';
-  var html = '';
-  for(var i=0;i<items.length;i++){
-    var r = items[i];
-    var cls = 'review-card';
-    if(r.id===state.activeReviewId) cls += ' active-focus';
-    if(r.type==='chuanwei') cls += ' chuanwei';
-    if(r.status==='approved') cls += ' status-approved';
-    if(r.status==='rejected') cls += ' status-rejected';
-    html += '<div class="' + cls + '" id="rc-' + r.id + '" onclick="setActiveReviewCard(\'' + r.id + '\')">';
-    html += '<input type="checkbox" onclick="event.stopPropagation();toggleReviewSelect(\'' + r.id + '\')" ' + (state.reviewSelected[r.id]?'checked':'') + '>';
-    html += '<div class="rc-body">';
-    html += '<div class="rc-tags">' + polarityBadge(r.polarity) + typeBadge(r.type) + statusBadge(r.status) + '<span class="muted" style="font-size:11px;">' + PLATFORM_NAMES[r.platform] + ' · ' + esc(r.author) + ' · ' + r.time + '</span></div>';
-    html += '<div class="rc-text">' + esc(r.text) + '</div>';
-    html += '<div class="rc-conf"><span class="muted" style="font-size:11px;">置信度</span><div class="progress-track"><div class="progress-fill" style="width:' + Math.round(r.confidence*100) + '%;background:' + confColor(r.confidence) + ';"></div></div><span style="font-size:11px;font-weight:700;">' + r.confidence.toFixed(2) + '</span></div>';
-    html += '<div class="rc-actions">';
-    html += '<button class="btn btn-green btn-sm" onclick="event.stopPropagation();approveReview(\'' + r.id + '\')">✓ 通过</button>';
-    html += '<button class="btn btn-danger btn-sm" onclick="event.stopPropagation();rejectReview(\'' + r.id + '\')">✕ 拒绝</button>';
-    html += '<button class="btn btn-sm" onclick="event.stopPropagation();labelReview(\'' + r.id + '\',\'irony\')">标反讽</button>';
-    html += '<button class="btn btn-sm" onclick="event.stopPropagation();labelReview(\'' + r.id + '\',\'shuijun\')">标水军</button>';
-    html += '<button class="btn btn-sm" onclick="event.stopPropagation();labelReview(\'' + r.id + '\',\'chuanwei\')">标串味</button>';
-    html += '</div></div></div>';
-  }
-  $('#reviewCardList').innerHTML = html || '<div class="empty-hint">没有符合筛选条件的内容</div>';
-  updateSelectedCount();
-}
-function setActiveReviewCard(id){
-  state.activeReviewId = id;
-  $all('.review-card').forEach(function(el){ el.classList.remove('active-focus'); });
-  var el = $('#rc-' + id);
-  if(el) el.classList.add('active-focus');
-}
-function toggleReviewSelect(id){
-  state.reviewSelected[id] = !state.reviewSelected[id];
-  updateSelectedCount();
-}
-function updateSelectedCount(){
-  var n = 0;
-  for(var k in state.reviewSelected){ if(state.reviewSelected[k]) n++; }
-  $('#selectedCount').textContent = n;
-}
-function toggleSelectAll(checked){
-  var items = filteredReviewItems();
-  for(var i=0;i<items.length;i++){ state.reviewSelected[items[i].id] = checked; }
-  renderReviewList();
-}
-function batchApprove(){
-  var n = 0;
-  for(var k in state.reviewSelected){
-    if(state.reviewSelected[k]){ setReviewStatus(k, 'approved'); n++; state.reviewSelected[k]=false; }
-  }
-  if(n===0){ showToast('请先勾选要批量处理的内容', 'red'); return; }
-  showToast('已批量通过 ' + n + ' 条内容', 'green');
-  renderReviewList();
-  refreshReviewBadges();
-}
-function batchReject(){
-  var n = 0;
-  for(var k in state.reviewSelected){
-    if(state.reviewSelected[k]){ setReviewStatus(k, 'rejected'); n++; state.reviewSelected[k]=false; }
-  }
-  if(n===0){ showToast('请先勾选要批量处理的内容', 'red'); return; }
-  showToast('已批量拒绝 ' + n + ' 条内容', 'green');
-  renderReviewList();
-  refreshReviewBadges();
-}
-function setReviewStatus(id, status){
-  for(var i=0;i<REVIEW_QUEUE.length;i++){ if(REVIEW_QUEUE[i].id===id){ REVIEW_QUEUE[i].status = status; break; } }
-}
-function approveReview(id){ setReviewStatus(id, 'approved'); showToast('已通过 ' + id, 'green'); renderReviewList(); refreshReviewBadges(); }
-function rejectReview(id){ setReviewStatus(id, 'rejected'); showToast('已拒绝 ' + id, 'green'); renderReviewList(); refreshReviewBadges(); }
-function labelReview(id, type){
-  for(var i=0;i<REVIEW_QUEUE.length;i++){
-    if(REVIEW_QUEUE[i].id===id){ REVIEW_QUEUE[i].type = type; break; }
-  }
-  showToast('已标记为「' + (type==='irony'?'反讽':type==='shuijun'?'水军':'串味') + '」', 'green');
-  renderReviewList();
-  renderChuanweiPanel();
-}
-function refreshReviewBadges(){
-  renderNav();
-}
-function handleReviewShortcut(e){
-  if(state.activeView!=='review') return;
-  if(!state.activeReviewId) return;
-  var tag = (e.target.tagName||'').toLowerCase();
-  if(tag==='input' || tag==='textarea') return;
-  var id = state.activeReviewId;
-  if(e.key==='1'){ for(var i=0;i<REVIEW_QUEUE.length;i++){ if(REVIEW_QUEUE[i].id===id) REVIEW_QUEUE[i].polarity='pos'; } renderReviewList(); }
-  else if(e.key==='2'){ for(i=0;i<REVIEW_QUEUE.length;i++){ if(REVIEW_QUEUE[i].id===id) REVIEW_QUEUE[i].polarity='neu'; } renderReviewList(); }
-  else if(e.key==='3'){ for(i=0;i<REVIEW_QUEUE.length;i++){ if(REVIEW_QUEUE[i].id===id) REVIEW_QUEUE[i].polarity='neg'; } renderReviewList(); }
-  else if(e.key==='i'){ labelReview(id,'irony'); }
-  else if(e.key==='s'){ labelReview(id,'shuijun'); }
-  else if(e.key==='r'){ labelReview(id,'chuanwei'); }
-  else if(e.key==='Enter'){ approveReview(id); }
-  else if(e.key==='Escape'){ state.activeReviewId=null; $all('.review-card').forEach(function(el){ el.classList.remove('active-focus'); }); }
-}
-/* ===================== 4. 情绪分析 ===================== */
-function renderAnalysisPeriodPills(){
-  var periods = [{id:'week', label:'近 7 天'}, {id:'month', label:'近 30 天'}, {id:'quarter', label:'本季度'}];
-  var html = '';
-  for(var i=0;i<periods.length;i++){
-    html += '<button class="tab-pill' + (periods[i].id===state.analysisPeriod?' active':'') + '" onclick="setAnalysisPeriod(\'' + periods[i].id + '\')">' + periods[i].label + '</button>';
-  }
-  $('#analysisPeriodPills').innerHTML = html;
-}
-function setAnalysisPeriod(p){
-  state.analysisPeriod = p;
-  renderAnalysisView();
-}
-function renderAnalysisView(){
-  renderAnalysisPeriodPills();
-  var data = ABSA_DATA[state.analysisPeriod];
-  var dims = data.map(function(d){ return d.dim; });
-  var series = data.map(function(d){ return d.net; });
-  $('#radarChart').innerHTML = buildRadarChart(dims, series);
-  var wc = '';
-  for(var i=0;i<WORDCLOUD.length;i++){
-    var scale = 12 + (WORDCLOUD[i].count/WORDCLOUD[0].count)*10;
-    wc += '<span style="font-size:' + scale + 'px;">' + WORDCLOUD[i].word + ' <small style="opacity:.6;font-size:11px;">' + WORDCLOUD[i].count + '</small></span>';
-  }
-  $('#wordcloud').innerHTML = wc;
-  var rows = '';
-  for(i=0;i<data.length;i++){
-    var d = data[i];
-    rows += '<tr><td><b>' + d.dim + '</b></td><td>' + d.pos + '</td><td>' + d.neg + '</td>';
-    rows += '<td style="color:' + (d.net>=0?'var(--green)':'var(--red)') + ';font-weight:700;">' + (d.net>=0?'+':'') + d.net.toFixed(2) + '</td>';
-    rows += '<td class="muted">' + esc(d.quote) + '</td></tr>';
-  }
-  $('#absaTableBody').innerHTML = rows;
-  renderBHIChart();
-}
-
-/* ===================== 5. 预警中心 ===================== */
-var ALERT_COLS = [
-  {status:'pending', label:'待处置'},
-  {status:'processing', label:'处理中'},
-  {status:'confirm', label:'待确认'},
-  {status:'archived', label:'已归档'}
-];
-function alertCountdownText(a){
-  if(a.status==='archived') return '已归档';
-  var mins = a.deadlineMin;
-  if(mins<=0) return '已到期';
-  var h = Math.floor(mins/60), m = mins%60;
-  return '剩余 ' + (h>0?h+'h':'') + m + 'm';
-}
-function alertCardHTML(a){
-  var blink = (a.level==='P0' && a.status!=='archived') ? ' blink' : '';
-  var html = '<div class="alert-card' + (a.level==='P0'?' level-p0':'') + '" draggable="true" ondragstart="dragStart(event,\'' + a.id + '\')" onclick="openAlertDrawer(\'' + a.id + '\')">';
-  html += '<div class="a-meta">' + levelBadge(a.level) + '<span class="countdown' + blink + '">⏱ ' + alertCountdownText(a) + '</span></div>';
-  html += '<div class="a-title">' + esc(a.title) + '</div>';
-  html += '<div class="a-meta">' + userChip(a.assigneeId) + '<span>· ' + PLATFORM_NAMES[a.platform] + '</span><span>· 相关 ' + a.relatedCount + ' 条</span></div>';
-  html += '</div>';
-  return html;
-}
-function renderAlertsKanban(){
-  var html = '';
-  for(var i=0;i<ALERT_COLS.length;i++){
-    var col = ALERT_COLS[i];
-    var items = ALERTS.filter(function(a){ return a.status===col.status; });
-    html += '<div class="kanban-col" id="kcol-' + col.status + '" ondragover="allowDrop(event)" ondrop="dropCard(event,\'' + col.status + '\')" ondragenter="dragEnterCol(event)" ondragleave="dragLeaveCol(event)">';
-    html += '<div class="kanban-col-title"><span>' + col.label + '</span><span class="badge badge-gray">' + items.length + '</span></div>';
-    for(var j=0;j<items.length;j++){ html += alertCardHTML(items[j]); }
-    if(!items.length) html += '<div class="empty-hint">暂无</div>';
-    html += '</div>';
-  }
-  $('#alertsKanban').innerHTML = html;
-}
-var dragAlertId = null;
-function dragStart(e, id){ dragAlertId = id; e.dataTransfer.setData('text/plain', id); }
-function allowDrop(e){ e.preventDefault(); }
-function dragEnterCol(e){ e.currentTarget.classList.add('drag-over'); }
-function dragLeaveCol(e){ e.currentTarget.classList.remove('drag-over'); }
-function dropCard(e, status){
-  e.preventDefault();
-  e.currentTarget.classList.remove('drag-over');
-  var id = dragAlertId || e.dataTransfer.getData('text/plain');
-  if(!id) return;
-  setAlertStatus(id, status);
-}
-function setAlertStatus(id, status){
-  for(var i=0;i<ALERTS.length;i++){
-    if(ALERTS[i].id===id){
-      ALERTS[i].status = status;
-      ALERTS[i].timeline.push({time:'刚刚', text:'状态流转为「' + (ALERT_COLS.filter(function(c){return c.status===status;})[0]||{}).label + '」'});
-      break;
-    }
-  }
-  renderAlertsKanban();
-  renderNav();
-  showToast('预警状态已更新', 'green');
-  if($('#drawerTitle') && $('#drawerOverlay').classList.contains('hidden')===false && state.currentDrawerAlertId===id){
-    openAlertDrawer(id);
-  }
-}
-function openAlertDrawer(id){
-  var a = null;
-  for(var i=0;i<ALERTS.length;i++){ if(ALERTS[i].id===id){ a=ALERTS[i]; break; } }
-  if(!a) return;
-  state.currentDrawerAlertId = id;
-  var html = '<div style="display:flex;gap:8px;margin-bottom:10px;">' + levelBadge(a.level) + statusBadgeAlert(a.status) + '</div>';
-  html += '<div style="font-size:14px;font-weight:700;line-height:1.6;margin-bottom:10px;">' + esc(a.title) + '</div>';
-  html += '<div class="muted" style="font-size:12px;margin-bottom:14px;">平台：' + PLATFORM_NAMES[a.platform] + ' · 触发于 ' + a.triggerTime + ' · 相关内容 ' + a.relatedCount + ' 条 · 处置责任人 ' + userChip(a.assigneeId) + '</div>';
-
-  html += '<div class="panel-title" style="font-size:12.8px;">处置时间线</div><div class="timeline">';
-  for(i=0;i<a.timeline.length;i++){
-    html += '<div class="timeline-item"><div class="t-time">' + a.timeline[i].time + '</div><div class="t-text">' + esc(a.timeline[i].text) + '</div></div>';
-  }
-  html += '</div>';
-
-  html += '<div class="panel-title" style="font-size:12.8px;margin-top:14px;">原始源帖</div>';
-  for(i=0;i<a.sourcePosts.length;i++){
-    var sp = a.sourcePosts[i];
-    html += '<div class="card" style="padding:10px 12px;margin-bottom:8px;"><div class="muted" style="font-size:11px;margin-bottom:4px;">' + sp.platform + ' · ' + esc(sp.author) + ' · ' + sp.time + '</div><div style="font-size:12.8px;">' + esc(sp.text) + '</div></div>';
-  }
-
-  html += '<div class="panel-title" style="font-size:12.8px;margin-top:14px;">应对口径</div>';
-  if(a.responseDraft){
-    html += '<div class="card" style="padding:12px;background:var(--blue-bg);border-color:#a5d8ff;font-size:12.8px;line-height:1.8;margin-bottom:10px;">' + esc(a.responseDraft) + '</div>';
-    if(a.status==='confirm'){
-      html += '<button class="btn btn-primary btn-block" style="margin-bottom:8px;" onclick="confirmResponseDraft(\'' + a.id + '\')">✓ 确认口径并归档至知识库</button>';
-    }
-  } else {
-    html += '<div class="empty-hint" style="margin-bottom:10px;">尚未生成应对口径</div>';
-    html += '<button class="btn btn-primary btn-block" style="margin-bottom:8px;" onclick="generateResponseDraft(\'' + a.id + '\')">✨ 生成应对口径（AI 辅助）</button>';
-  }
-
-  html += '<div class="panel-title" style="font-size:12.8px;margin-top:14px;">状态流转</div>';
-  html += '<div class="chip-row">';
-  for(i=0;i<ALERT_COLS.length;i++){
-    var col = ALERT_COLS[i];
-    html += '<button class="btn btn-sm' + (a.status===col.status?' btn-primary':'') + '" onclick="setAlertStatus(\'' + a.id + '\',\'' + col.status + '\')">' + col.label + '</button>';
-  }
-  html += '</div>';
-  html += '<button class="btn btn-danger btn-block" style="margin-top:14px;" onclick="markFalsePositive(\'' + a.id + '\')">⚠ 标记为误报（自动归入串味词库）</button>';
-
-  openDrawer(a.id + ' 处置详情', html);
-}
-function generateResponseDraft(id){
-  var a = null;
-  for(var i=0;i<ALERTS.length;i++){ if(ALERTS[i].id===id){ a=ALERTS[i]; break; } }
-  if(!a) return;
-  var tmpl = RESPONSE_TEMPLATES[a.category] || RESPONSE_TEMPLATES['默认'];
-  a.responseDraft = tmpl;
-  a.status = 'confirm';
-  a.timeline.push({time:'刚刚', text:'AI 已生成应对口径草稿，等待确认'});
-  showToast('应对口径已生成，请确认', 'green');
-  renderAlertsKanban();
-  openAlertDrawer(id);
-}
-function confirmResponseDraft(id){
-  var a = null;
-  for(var i=0;i<ALERTS.length;i++){ if(ALERTS[i].id===id){ a=ALERTS[i]; break; } }
-  if(!a) return;
-  a.status = 'archived';
-  a.timeline.push({time:'刚刚', text:'口径已确认，归档至知识库并结束处置'});
-  KNOWLEDGE.unshift({id:'K' + (100+KNOWLEDGE.length), category:'口径', subcategory:'', title:a.category + '应对口径（来自 ' + a.id + '）', content:a.responseDraft, refCount:1, updatedAt:'刚刚', status:'正常'});
-  showToast('口径已确认并沉淀至知识库', 'green');
-  renderAlertsKanban();
-  closeDrawer();
-}
-function markFalsePositive(id){
-  var a = null;
-  for(var i=0;i<ALERTS.length;i++){ if(ALERTS[i].id===id){ a=ALERTS[i]; break; } }
-  if(!a) return;
-  a.status = 'archived';
-  a.timeline.push({time:'刚刚', text:'已标记为误报，相关关键词已加入串味词库'});
-  KNOWLEDGE.unshift({id:'K' + (100+KNOWLEDGE.length), category:'串味', subcategory:'', title:'串味词库：' + a.id + ' 误报关联词', content:'预警「' + a.title + '」经核实为误报，相关触发词已加入排除清单，后续不再计入舆情统计。', refCount:1, updatedAt:'刚刚', status:'正常'});
-  showToast('已标记误报并归入串味词库', 'green');
-  renderAlertsKanban();
-  closeDrawer();
-}
-function renderCooldownList(){
-  var html = '';
-  for(var i=0;i<COOLDOWN_EVENTS.length;i++){
-    var c = COOLDOWN_EVENTS[i];
-    html += '<div class="card" style="padding:10px 12px;margin-bottom:8px;cursor:pointer;" onclick="toggleCooldownDetail(\'' + c.id + '\')">';
-    html += '<div style="display:flex;justify-content:space-between;"><b style="font-size:12.8px;">' + esc(c.title) + '</b><span class="badge badge-gray">' + c.closedAt + '</span></div>';
-    html += '<div id="cd-detail-' + c.id + '" class="muted" style="font-size:11.5px;margin-top:6px;display:none;">' + esc(c.resolution) + '</div>';
-    html += '</div>';
-  }
-  $('#cooldownList').innerHTML = html;
-}
-function toggleCooldownDetail(id){
-  var el = $('#cd-detail-' + id);
-  if(el) el.style.display = el.style.display==='none' ? 'block' : 'none';
-}
-
-/* ===================== 6. 报告中心 ===================== */
-function renderReportsTab(){
-  var tabs = [{id:'weekly', label:'周报'}, {id:'daily', label:'日报'}];
-  var html = '';
-  for(var i=0;i<tabs.length;i++){
-    html += '<button class="tab-pill' + (tabs[i].id===state.reportsTab?' active':'') + '" onclick="setReportsTab(\'' + tabs[i].id + '\')">' + tabs[i].label + '</button>';
-  }
-  $('#reportsTabPills').innerHTML = html;
-  $('#reportsTabWeekly').style.display = state.reportsTab==='weekly' ? 'block' : 'none';
-  $('#reportsTabDaily').style.display = state.reportsTab==='daily' ? 'block' : 'none';
-  if(state.reportsTab==='weekly'){ renderReportHistory(); renderReportPreview(); }
-  if(state.reportsTab==='daily'){ renderBossDaily(); }
-}
-function setReportsTab(id){ state.reportsTab = id; renderReportsTab(); }
-function renderReportHistory(){
-  var html = '';
-  for(var i=0;i<REPORTS.length;i++){
-    var r = REPORTS[i];
-    html += '<div class="card" style="padding:10px 12px;margin-bottom:8px;cursor:pointer;' + (r.id===state.activeReportId?'border-color:var(--accent);':'') + '" onclick="selectReport(\'' + r.id + '\')">';
-    html += '<div style="display:flex;justify-content:space-between;align-items:center;"><b style="font-size:12.8px;">' + r.period + '</b>' + reportStatusBadge(r.status) + '</div>';
-    html += '<div class="muted" style="font-size:11px;margin-top:4px;">撰写人 ' + r.author + ' · 审核人 ' + r.reviewer + '</div>';
-    html += '</div>';
-  }
-  $('#reportHistoryList').innerHTML = html;
-}
-function selectReport(id){ state.activeReportId = id; renderReportHistory(); renderReportPreview(); }
-function reportById(id){
-  for(var i=0;i<REPORTS.length;i++){ if(REPORTS[i].id===id) return REPORTS[i]; }
-  return null;
-}
-function renderReportPreview(){
-  var r = reportById(state.activeReportId);
-  if(!r){ $('#reportPreviewBody').innerHTML = '<div class="empty-hint">请选择一份报告</div>'; return; }
-  $('#reportPreviewTitle').innerHTML = r.period + ' 周报预览 ' + reportStatusBadge(r.status);
-  var html = '';
-  for(var i=0;i<r.content.length;i++){
-    var c = r.content[i];
-    html += '<p>' + esc(c.text) + ' <span class="cite-badge" onclick="showSourceDoc(\'' + c.cite + '\')">来源 ' + c.cite + '</span></p>';
-  }
-  html += '<div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border);">';
-  html += '<div class="muted" style="font-size:12px;">一期仅展示确定性报告及来源，审批与发布操作暂不开放。</div>';
-  html += '</div>';
-  $('#reportPreviewBody').innerHTML = html;
-}
-function reportSubmit(id){
-  var r = reportById(id); if(!r) return;
-  r.status = 'pending'; r.submittedAt = '刚刚';
-  showToast('已提交总监审核', 'green');
-  renderReportHistory(); renderReportPreview();
-}
-function reportApprove(id){
-  var r = reportById(id); if(!r) return;
-  r.status = 'published'; r.reviewedAt = '刚刚'; r.pushedAt = '刚刚'; r.reviewNote = '内容核实充分，同意发布。';
-  showToast('审核通过，已推送飞书群', 'green');
-  renderReportHistory(); renderReportPreview();
-}
-function reportReject(id){
-  var r = reportById(id); if(!r) return;
-  r.status = 'draft'; r.reviewNote = '需补充数据来源，请修改后重新提交。';
-  showToast('已打回草稿', 'red');
-  renderReportHistory(); renderReportPreview();
-}
-function showSourceDoc(docId){
-  var d = SOURCE_DOCS[docId];
-  if(!d) return;
-  var html = '<div class="muted" style="font-size:11.5px;margin-bottom:10px;">引用编号：' + docId + '</div>';
-  html += '<div style="font-size:12.8px;line-height:1.8;">' + esc(d.excerpt) + '</div>';
-  openDrawer(d.title, html);
-}
-function renderBacklogTable(){
-  var html = '';
-  for(var i=0;i<BACKLOG.length;i++){
-    var b = BACKLOG[i];
-    html += '<tr><td><b>' + b.demand + '</b></td><td>' + b.platform + '</td><td>' + b.count + '</td><td>' + (b.sentiment==='负面'?'<span class="badge badge-red">负面</span>':b.sentiment==='正面'?'<span class="badge badge-green">正面</span>':'<span class="badge badge-gray">中性</span>') + '</td><td><span class="badge badge-outline">' + b.roadmap + '</span></td></tr>';
-  }
-  $('#backlogTableBody').innerHTML = html;
-}
-function renderBossDaily(){
-  var html = '';
-  for(var i=0;i<BOSS_DAILY.length;i++){
-    var b = BOSS_DAILY[i];
-    html += '<div class="card" style="padding:10px 12px;margin-bottom:8px;"><b style="font-size:12px;color:var(--text-secondary);">' + b.date + '</b><div style="font-size:12.8px;margin-top:4px;">' + esc(b.text) + '</div></div>';
-  }
-  $('#bossDailyList').innerHTML = html;
-}
-function triggerBossDaily(){
-  BOSS_DAILY.unshift({date:'刚刚', text:'今日舆情：手动触发生成，1 个 P0 预警处理中，整体声量较昨日上升 8.2%。'});
-  showToast('日报已生成并推送飞书群', 'green');
-  renderBossDaily();
-}
-/* ===================== 9. 监控配置 ===================== */
-function renderConfigView(){ renderEntityConfig(); renderPlatformSchedule(); }
-function renderIntegrationsView(){ renderLLMConfig(); renderBudgetPanel(); renderFeishuPanel(); }
-function renderEntityConfig(){
-  var html = '';
-  for(var i=0;i<ENTITIES.length;i++){
-    var e = ENTITIES[i];
-    html += '<div class="section-gap"><b style="font-size:12.8px;">' + e.name + '</b>';
-    html += '<div style="margin:8px 0;"><span class="muted" style="font-size:11.5px;">别名</span><div class="chip-row" style="margin-top:6px;">';
-    for(var j=0;j<e.aliases.length;j++){ html += '<span class="chip">' + e.aliases[j] + '<span class="chip-x" onclick="removeChip(\'' + e.id + '\',\'aliases\',' + j + ')">×</span></span>'; }
-    html += '<button class="chip-add" onclick="addChip(\'' + e.id + '\',\'aliases\')">+ 添加</button></div></div>';
-    html += '<div style="margin:8px 0;"><span class="muted" style="font-size:11.5px;">串味排除词</span><div class="chip-row" style="margin-top:6px;">';
-    for(j=0;j<e.mustNot.length;j++){ html += '<span class="chip chip-amber">' + e.mustNot[j] + '<span class="chip-x" onclick="removeChip(\'' + e.id + '\',\'mustNot\',' + j + ')">×</span></span>'; }
-    html += '<button class="chip-add" onclick="addChip(\'' + e.id + '\',\'mustNot\')">+ 添加</button></div></div>';
-    html += '<div><span class="muted" style="font-size:11.5px;">危机加权词</span><div class="chip-row" style="margin-top:6px;">';
-    for(j=0;j<e.crisisBoost.length;j++){ html += '<span class="chip chip-red">' + e.crisisBoost[j] + '<span class="chip-x" onclick="removeChip(\'' + e.id + '\',\'crisisBoost\',' + j + ')">×</span></span>'; }
-    html += '<button class="chip-add" onclick="addChip(\'' + e.id + '\',\'crisisBoost\')">+ 添加</button></div></div></div>';
-  }
-  $('#entityConfigList').innerHTML = html;
-}
-function entityById(id){
-  for(var i=0;i<ENTITIES.length;i++){ if(ENTITIES[i].id===id) return ENTITIES[i]; }
-  return null;
-}
-function removeChip(entityId, field, idx){
-  var e = entityById(entityId); if(!e) return;
-  e[field].splice(idx,1);
-  renderEntityConfig();
-  showToast('已移除', 'green');
-}
-function addChip(entityId, field){
-  var e = entityById(entityId); if(!e) return;
-  var val = prompt('请输入要添加的词条：');
-  if(!val) return;
-  e[field].push(val);
-  renderEntityConfig();
-  showToast('已添加「' + val + '」', 'green');
-}
-function renderPlatformSchedule(){
-  var html = '';
-  for(var i=0;i<PLATFORM_SCHEDULE.length;i++){
-    var p = PLATFORM_SCHEDULE[i];
-    html += '<tr><td><b>' + p.name + '</b></td>';
-    html += '<td><label class="switch"><input type="checkbox" ' + (p.enabled?'checked':'') + ' onchange="togglePlatformSchedule(\'' + p.id + '\')"><span class="slider-track"></span></label></td>';
-    html += '<td><select onchange="updateSchedule(\'' + p.id + '\', this.value)"><option' + (p.cron==='每 30 分钟'?' selected':'') + '>每 30 分钟</option><option' + (p.cron==='每 1 小时'?' selected':'') + '>每 1 小时</option><option' + (p.cron==='每 2 小时'?' selected':'') + '>每 2 小时</option><option' + (p.cron==='每 4 小时'?' selected':'') + '>每 4 小时</option><option' + (p.cron==='每 6 小时'?' selected':'') + '>每 6 小时</option></select></td></tr>';
-  }
-  $('#platformScheduleBody').innerHTML = html;
-}
-function togglePlatformSchedule(id){
-  for(var i=0;i<PLATFORM_SCHEDULE.length;i++){ if(PLATFORM_SCHEDULE[i].id===id){ PLATFORM_SCHEDULE[i].enabled = !PLATFORM_SCHEDULE[i].enabled; showToast(PLATFORM_SCHEDULE[i].name + (PLATFORM_SCHEDULE[i].enabled?' 已启用':' 已停用'), 'green'); break; } }
-}
-function updateSchedule(id, val){
-  for(var i=0;i<PLATFORM_SCHEDULE.length;i++){ if(PLATFORM_SCHEDULE[i].id===id){ PLATFORM_SCHEDULE[i].cron = val; showToast(PLATFORM_SCHEDULE[i].name + ' 调度频率已更新为 ' + val, 'green'); break; } }
-}
-function renderLLMConfig(){
-  var html = '<table class="data-table"><tbody>';
-  html += '<tr><td class="muted">模型</td><td><b>' + LLM_CONFIG.model + '</b></td></tr>';
-  html += '<tr><td class="muted">Temperature</td><td><b>' + LLM_CONFIG.temperature + '</b></td></tr>';
-  html += '<tr><td class="muted">最大 Token</td><td><b>' + LLM_CONFIG.maxTokens + '</b></td></tr>';
-  html += '<tr><td class="muted">Prompt 版本</td><td><b>' + LLM_CONFIG.promptVersion + '</b></td></tr>';
-  html += '</tbody></table><button class="btn btn-sm" style="margin-top:10px;" onclick="showToast(\'配置已保存\',\'green\')">保存配置</button>';
-  $('#llmConfigPanel').innerHTML = html;
-}
-function renderBudgetPanel(){
-  var pct = Math.round(BUDGET.used/BUDGET.total*100);
-  var html = '<div style="display:flex;justify-content:space-between;font-size:12.8px;margin-bottom:8px;"><span>已用 ' + BUDGET.used + ' ' + BUDGET.unit + '</span><span>总额 ' + BUDGET.total + ' ' + BUDGET.unit + '</span></div>';
-  html += '<div class="progress-track" style="height:10px;"><div class="progress-fill" style="width:' + pct + '%;background:' + (pct>80?'var(--red)':pct>60?'var(--amber)':'var(--accent)') + ';"></div></div>';
-  html += '<div class="muted" style="font-size:11.5px;margin-top:6px;">已使用 ' + pct + '%</div>';
-  $('#budgetPanel').innerHTML = html;
-}
-function renderFeishuPanel(){
-  var html = '<div style="margin-bottom:10px;"><span class="muted" style="font-size:11.5px;">Webhook 地址</span><div style="font-size:12px;font-family:monospace;background:var(--bg-elevated);padding:8px 10px;border-radius:6px;margin-top:4px;word-break:break-all;">' + FEISHU.webhook + '</div></div>';
-  html += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;"><label class="switch"><input type="checkbox" ' + (FEISHU.enabled?'checked':'') + ' onchange="FEISHU.enabled=!FEISHU.enabled;showToast(FEISHU.enabled?\'已启用飞书推送\':\'已停用飞书推送\',\'green\')"><span class="slider-track"></span></label><span style="font-size:12.5px;">启用飞书推送</span></div>';
-  html += '<div class="muted" style="font-size:11.5px;margin-bottom:10px;">上次推送：' + FEISHU.lastPush + '</div>';
-  html += '<button class="btn btn-sm" onclick="testFeishuPush()">发送测试消息</button>';
-  $('#feishuPanel').innerHTML = html;
-}
-function testFeishuPush(){
-  FEISHU.lastPush = '刚刚';
-  showToast('测试消息已发送至飞书群', 'green');
-  renderFeishuPanel();
-}
-
-/* ===================== 9. 舆情知识库 ===================== */
-function renderKnowledgeView(){ renderKBTree(); renderKBCardList(); }
-function renderKBTree(){
-  var html = '';
-  for(var i=0;i<KB_CATEGORIES.length;i++){
-    var c = KB_CATEGORIES[i];
-    var active = state.kbFilter.category===c.key && !state.kbFilter.subcategory;
-    html += '<div class="kb-tree-group">';
-    html += '<div class="kb-tree-item' + (active?' active':'') + '" onclick="setKBFilter(\'' + c.key + '\', null)">' + c.label + '</div>';
-    if(c.subs){
-      html += '<div class="kb-tree-sub">';
-      for(var j=0;j<c.subs.length;j++){
-        var sub = c.subs[j];
-        var subActive = state.kbFilter.category===c.key && state.kbFilter.subcategory===sub;
-        html += '<div class="kb-tree-item' + (subActive?' active':'') + '" onclick="setKBFilter(\'' + c.key + '\',\'' + sub + '\')">└ ' + sub + '</div>';
-      }
-      html += '</div>';
-    }
-    html += '</div>';
-  }
-  html += '<div class="kb-tree-group"><div class="kb-tree-item' + (!state.kbFilter.category?' active':'') + '" onclick="setKBFilter(null,null)">📚 全部</div></div>';
-  $('#kbTree').innerHTML = html;
-}
-function setKBFilter(category, sub){
-  state.kbFilter.category = category;
-  state.kbFilter.subcategory = sub;
-  renderKBTree();
-  renderKBCardList();
-}
-function handleKBSearch(){
-  state.kbFilter.search = $('#kbSearchInput').value.trim();
-  renderKBCardList();
-}
-function filteredKBItems(){
-  return KNOWLEDGE.filter(function(k){
-    if(state.kbFilter.category && k.category!==state.kbFilter.category) return false;
-    if(state.kbFilter.subcategory && k.subcategory!==state.kbFilter.subcategory) return false;
-    if(state.kbFilter.search){
-      var kw = state.kbFilter.search;
-      if(k.title.indexOf(kw)===-1 && k.content.indexOf(kw)===-1) return false;
-    }
-    return true;
-  });
-}
-function renderKBCardList(){
-  var items = filteredKBItems();
-  $('#kbResultCount').textContent = '共 ' + items.length + ' 条';
-  var kw = state.kbFilter.search;
-  var html = '';
-  for(var i=0;i<items.length;i++){
-    var k = items[i];
-    var expanded = state.kbExpandedId===k.id;
-    html += '<div class="kb-card" onclick="toggleKBExpand(\'' + k.id + '\')">';
-    html += '<div class="kb-card-head"><span class="kb-card-title">' + highlightText(k.title, kw) + '</span><span class="badge badge-outline">' + k.category + (k.subcategory?(' · '+k.subcategory):'') + '</span>' + kbStatusBadge(k.status) + '</div>';
-    html += '<div class="kb-card-meta"><span>引用 ' + k.refCount + ' 次</span><span>更新于 ' + k.updatedAt + '</span></div>';
-    if(expanded){
-      html += '<div class="kb-full-text">' + highlightText(k.content, kw).replace(/\n/g,'<br>') + '</div>';
-      html += '<div class="rc-actions" style="margin-top:10px;" onclick="event.stopPropagation()">';
-      html += '<button class="btn btn-primary btn-sm" onclick="citeToReport(\'' + k.id + '\')">引用到当前报告</button>';
-      html += '<button class="btn btn-sm" onclick="editKBItem(\'' + k.id + '\')">编辑</button>';
-      html += '<button class="btn btn-sm" onclick="archiveKBItem(\'' + k.id + '\')">归档</button>';
-      html += '</div>';
-    }
-    html += '</div>';
-  }
-  $('#kbCardList').innerHTML = html || '<div class="empty-hint">未找到匹配的知识库内容</div>';
-}
-function toggleKBExpand(id){
-  state.kbExpandedId = state.kbExpandedId===id ? null : id;
-  renderKBCardList();
-}
-function kbItemById(id){
-  for(var i=0;i<KNOWLEDGE.length;i++){ if(KNOWLEDGE[i].id===id) return KNOWLEDGE[i]; }
-  return null;
-}
-function citeToReport(id){
-  var k = kbItemById(id); if(!k) return;
-  var r = reportById(state.activeReportId) || REPORTS[0];
-  r.content.push({text:'引用知识库「' + k.title + '」：' + k.content.substring(0,60) + '...', cite:k.id});
-  showToast('已引用到「' + r.period + '」周报草稿', 'green');
-}
-function editKBItem(id){
-  var k = kbItemById(id); if(!k) return;
-  var val = prompt('编辑内容：', k.content);
-  if(val===null) return;
-  k.content = val;
-  k.updatedAt = '刚刚';
-  k.status = '正常';
-  showToast('已更新知识库内容', 'green');
-  renderKBCardList();
-}
-function archiveKBItem(id){
-  var k = kbItemById(id); if(!k) return;
-  k.status = '已过期';
-  showToast('已归档「' + k.title + '」', 'green');
-  renderKBCardList();
-}
-function distillKnowledge(){
-  var archived = ALERTS.filter(function(a){ return a.status==='archived' && a.responseDraft; });
-  var added = 0;
-  for(var i=0;i<archived.length;i++){
-    var a = archived[i];
-    var exists = KNOWLEDGE.some(function(k){ return k.title.indexOf(a.id)!==-1; });
-    if(exists) continue;
-    KNOWLEDGE.unshift({id:'K' + (100+KNOWLEDGE.length+added), category:'案例', subcategory:a.category, title:a.category + '案例沉淀（' + a.id + '）', content:'预警：' + a.title + '\n处置口径：' + a.responseDraft, refCount:0, updatedAt:'刚刚', status:'正常'});
-    added++;
-  }
-  if(added===0){ showToast('暂无新的可沉淀处置记录', 'red'); return; }
-  showToast('已从 ' + added + ' 条处置记录中沉淀新知识', 'green');
-  renderKBCardList();
-}
-
-/* ===================== 抽屉 ===================== */
-function openDrawer(title, bodyHtml){
-  $('#drawerTitle').textContent = title;
-  $('#drawerBody').innerHTML = bodyHtml;
+function openDrawer(title,bodyHtml){
+  $('#drawerTitle').textContent=title;
+  $('#drawerBody').innerHTML=bodyHtml;
   $('#drawerOverlay').classList.remove('hidden');
 }
+
 function closeDrawer(){
   $('#drawerOverlay').classList.add('hidden');
-  state.currentDrawerAlertId = null;
+  state.currentDrawerAlertId=null;
 }
 
-/* ===================== 全局搜索 Ctrl+K ===================== */
-var SEARCH_INDEX = [];
+var SEARCH_INDEX=[];
 function buildSearchIndex(){
-  var idx = [];
-  var incidents = state.incidents.data ? state.incidents.data.items : [];
-  for(var i=0;i<incidents.length;i++){
-    var incident = incidents[i];
-    idx.push({type:'预警', title:incident.summary || incident.incident_id, meta:incident.level + ' · ' + incident.status, action:"switchView('alerts');openAlertDrawer('" + incident.incident_id + "')"});
-  }
-  var backlog = state.backlog.data ? state.backlog.data.items : [];
-  for(i=0;i<backlog.length;i++){
-    var item = backlog[i];
-    idx.push({type:'诉求', title:item.topic, meta:item.kind + ' · ' + item.count + ' 条', action:"switchView('backlog')"});
-  }
-  return idx;
-}
-function openSearch(){
-  SEARCH_INDEX = buildSearchIndex();
-  $('#searchOverlay').classList.remove('hidden');
-  $('#searchInput').value = '';
-  $('#searchResults').innerHTML = '<div class="empty-hint">输入至少 2 个字开始搜索</div>';
-  setTimeout(function(){ $('#searchInput').focus(); }, 30);
-}
-function closeSearch(){
-  $('#searchOverlay').classList.add('hidden');
-}
-function handleSearchInput(){
-  var kw = $('#searchInput').value.trim();
-  if(kw.length<2){ $('#searchResults').innerHTML = '<div class="empty-hint">输入至少 2 个字开始搜索</div>'; return; }
-  var results = SEARCH_INDEX.filter(function(item){ return item.title.indexOf(kw)!==-1; }).slice(0,30);
-  if(!results.length){ $('#searchResults').innerHTML = '<div class="empty-hint">未找到相关结果</div>'; return; }
-  var html = '';
-  for(var i=0;i<results.length;i++){
-    var r = results[i];
-    html += '<div class="search-result-item" onclick="runSearchResult(' + i + ')"><span class="badge badge-outline">' + r.type + '</span> ' + highlightText(r.title, kw) + '<div class="sr-meta">' + esc(r.meta) + '</div></div>';
-  }
-  $('#searchResults').innerHTML = html;
-  state.currentSearchResults = results;
-}
-function runSearchResult(i){
-  var r = state.currentSearchResults[i];
-  if(!r) return;
-  closeSearch();
-  (new Function(r.action))();
-}
-function confirmSearch(){
-  if(state.currentSearchResults && state.currentSearchResults.length){ runSearchResult(0); }
+  var items=[];
+  var incidents=state.incidents.data ? state.incidents.data.items || [] : [];
+  incidents.forEach(function(item){items.push({type:'预警',title:item.summary || item.incident_id,meta:item.level+' · '+item.status,view:'alerts',id:item.incident_id});});
+  var backlog=state.backlog.data ? state.backlog.data.items || [] : [];
+  backlog.forEach(function(item){items.push({type:'诉求',title:item.topic,meta:item.kind+' · '+item.count+' 条',view:'backlog'});});
+  var reports=state.reports.data ? state.reports.data.items || [] : [];
+  reports.forEach(function(item){items.push({type:'报告',title:item.title || item.run_id,meta:overviewFormatTime(item.created_at),view:'reports',id:item.run_id});});
+  return items;
 }
 
-/* ===================== 键盘快捷键 ===================== */
-document.addEventListener('keydown', function(e){
-  if(e.key==='Escape'){
-    if(!$('#drawerOverlay').classList.contains('hidden')){ closeDrawer(); return; }
-    if(!$('#searchOverlay').classList.contains('hidden')){ closeSearch(); return; }
+function openSearch(){
+  SEARCH_INDEX=buildSearchIndex();
+  $('#searchOverlay').classList.remove('hidden');
+  $('#searchInput').value='';
+  $('#searchResults').innerHTML='<div class="empty-hint">输入至少 2 个字开始搜索</div>';
+  setTimeout(function(){$('#searchInput').focus();},30);
+}
+
+function closeSearch(){ $('#searchOverlay').classList.add('hidden'); }
+
+function handleSearchInput(){
+  var keyword=$('#searchInput').value.trim();
+  if(keyword.length<2){ $('#searchResults').innerHTML='<div class="empty-hint">输入至少 2 个字开始搜索</div>'; return; }
+  var results=SEARCH_INDEX.filter(function(item){return item.title.indexOf(keyword)!==-1;}).slice(0,30);
+  state.currentSearchResults=results;
+  if(!results.length){ $('#searchResults').innerHTML='<div class="empty-hint">未找到相关结果</div>'; return; }
+  $('#searchResults').innerHTML=results.map(function(item,index){return '<button class="search-result-item" onclick="runSearchResult('+index+')"><span class="badge badge-outline">'+esc(item.type)+'</span> '+esc(item.title)+'<span class="sr-meta">'+esc(item.meta)+'</span></button>';}).join('');
+}
+
+function runSearchResult(index){
+  var result=state.currentSearchResults && state.currentSearchResults[index];
+  if(!result) return;
+  closeSearch();
+  switchView(result.view);
+  if(result.view==='alerts' && result.id) openAlertDrawer(result.id);
+  if(result.view==='reports' && result.id) selectReport(result.id);
+}
+
+function confirmSearch(){
+  if(state.currentSearchResults && state.currentSearchResults.length) runSearchResult(0);
+}
+
+document.addEventListener('keydown',function(event){
+  if(event.key==='Escape'){
+    if(!$('#drawerOverlay').classList.contains('hidden')){closeDrawer();return;}
+    if(!$('#searchOverlay').classList.contains('hidden')){closeSearch();return;}
   }
-  if((e.ctrlKey || e.metaKey) && e.key.toLowerCase()==='k'){
-    e.preventDefault();
-    openSearch();
+  if((event.ctrlKey || event.metaKey) && event.key.toLowerCase()==='k'){
+    event.preventDefault(); openSearch(); return;
+  }
+  if((event.ctrlKey || event.metaKey) && /^[0-9]$/.test(event.key)){
+    var index=event.key==='0'?9:parseInt(event.key,10)-1;
+    if(VIEWS[index]){event.preventDefault();switchView(VIEWS[index].id);}
     return;
   }
-  if((e.ctrlKey || e.metaKey) && /^[0-9]$/.test(e.key)){
-    var idx = e.key==='0' ? 9 : (parseInt(e.key,10)-1);
-    if(VIEWS[idx] && !VIEWS[idx].disabled){
-      e.preventDefault();
-      switchView(VIEWS[idx].id);
-    }
-    return;
-  }
-  handleReviewShortcut(e);
+  if(window.handleReviewShortcut) handleReviewShortcut(event);
 });
 
-/* ===================== 初始化 ===================== */
 function init(){
   renderNav();
+  renderContextControls();
   renderHealthStrip();
-  SEARCH_INDEX = buildSearchIndex();
   switchView('overview');
 }
-document.addEventListener('DOMContentLoaded', init);
+
+document.addEventListener('DOMContentLoaded',init);

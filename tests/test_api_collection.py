@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import io
+import datetime as dt
 import json
 import os
 import tempfile
@@ -12,7 +13,11 @@ from email.message import Message
 from unittest import mock
 
 from yuqing import dashboard
-from yuqing.api.collection import build_collection_status, latest_platform_runs
+from yuqing.api.collection import (
+    build_collection_status,
+    execution_environment,
+    latest_platform_runs,
+)
 from yuqing.store import Store
 
 
@@ -34,7 +39,10 @@ class CollectionReadModelTest(unittest.TestCase):
         self.store.close()
 
     def test_latest_platform_runs_aggregates_one_run_and_marks_missing(self) -> None:
-        rows, quality, notes = latest_platform_runs(self.store, "youdoo", ["weibo", "tieba"])
+        rows, quality, notes = latest_platform_runs(
+            self.store, "youdoo", ["weibo", "tieba"],
+            now=dt.datetime.fromisoformat("2026-07-13T12:00:00+08:00"),
+        )
 
         self.assertEqual("run-2", rows[0]["run_id"])
         self.assertEqual(7, rows[0]["n_fetched"])
@@ -42,6 +50,17 @@ class CollectionReadModelTest(unittest.TestCase):
         self.assertEqual("unknown", rows[1]["health"])
         self.assertEqual("degraded", quality)
         self.assertTrue(any("tieba" in note for note in notes))
+
+    def test_old_successful_run_is_marked_stale(self) -> None:
+        rows, quality, notes = latest_platform_runs(
+            self.store, "youdoo", ["weibo"],
+            now=dt.datetime.fromisoformat("2026-07-15T12:00:00+08:00"),
+        )
+
+        self.assertTrue(rows[0]["stale"])
+        self.assertEqual("stale", rows[0]["status"])
+        self.assertEqual("degraded", quality)
+        self.assertTrue(any("过期" in note for note in notes))
 
     def test_collection_status_combines_login_run_and_environment(self) -> None:
         def login_provider(platforms):
@@ -63,6 +82,21 @@ class CollectionReadModelTest(unittest.TestCase):
         self.assertTrue(data["platforms"][0]["login"]["logged_in"])
         self.assertFalse(data["platforms"][1]["login_required"])
         self.assertEqual("degraded", quality)
+
+    def test_kubernetes_dashboard_never_owns_browser_collection(self) -> None:
+        with mock.patch.dict(os.environ, {
+            "KUBERNETES_SERVICE_HOST": "10.0.0.1",
+            "YUQING_ENABLE_COLLECTION": "false",
+            "YUQING_COLLECTION_EXECUTION_MODE": "kubernetes-dashboard",
+        }, clear=False), mock.patch(
+            "yuqing.api.collection.shutil.which", return_value="/usr/bin/opencli",
+        ):
+            environment = execution_environment()
+
+        self.assertTrue(environment["in_kubernetes"])
+        self.assertTrue(environment["opencli_available"])
+        self.assertFalse(environment["can_run"])
+        self.assertEqual("kubernetes-dashboard", environment["mode"])
 
 
 class CollectionHTTPTest(unittest.TestCase):

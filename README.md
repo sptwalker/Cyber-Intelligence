@@ -43,9 +43,21 @@ python3 -c "from yuqing.dashboard import serve; serve(db='yuqing-demo.db')"
 
 三层视图（一份数据，三张皮肤）：**高管** `/exec` 品牌健康指数 BHI + 危机灯 + 关键结论；**中层** `/dash` Chart.js 战情室（情绪/声量/BHI趋势 + 方面雷达 + KOL榜 + 异常账号簇 + 竞品SOV）；**基层** `/` 详情看板 + 复核队列 + CLI。
 
+### UI 入口
+
+- `/`：唯一生产工作台入口，资源位于 `yuqing/web/workbench/`。
+- `/v2`：指向同一工作台的兼容 URL，不维护第二份 HTML。
+- `/legacy`、`/dash`、`/exec`：服务端渲染的回退及专项视图。
+
+历史静态原型不参与 Python 包、Docker 镜像或运行时路由，避免出现多份页面各自演进。
+
 **语义向量化**（配置页填 `EMBED_API_KEY`=阿里百炼即启用，无 key 全部降级回词汇匹配、不阻塞）：语义检索（问"电池"召回只说"续航"的帖）· 话题语义归并（"续航差"+"电池不耐用"归一簇）· 洗稿近似去重（改写控评识别为同簇）· 监控目标语义扩展（`cli suggest` 从数据发现该监控的新词，人工确认）。可选语义相关性过滤 `SEMANTIC_RELEVANCE=1`（召回不含品牌字面的相关帖，默认关）。
 
 监控对象配置在 [`yuqing/watch.yaml`](yuqing/watch.yaml)（实体/别名/否定词/危机词，git 版本化）。
+
+K8s 只承载工作台/API，不接管分析师本机 Chrome；opencli 采集继续在受控执行机运行，
+并通过一致的 SQLite 副本或单写者共享卷交付数据。部署边界与校验步骤见
+[`deploy/k8s/README.md`](deploy/k8s/README.md)。
 
 ## 架构
 

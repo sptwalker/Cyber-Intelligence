@@ -116,6 +116,8 @@ class OverviewReadModelTest(unittest.TestCase):
         self.assertEqual(1, data["pending_review_count"])
         self.assertEqual("P0", data["top_incident"]["level"])
         self.assertEqual("run-report", data["latest_report"]["run_id"])
+        self.assertEqual({"youdoo", "competitor"}, {item["id"] for item in data["entities"]})
+        self.assertEqual("7d", data["metrics_scope"])
         self.assertEqual("degraded", quality)
         self.assertTrue(any("tieba" in note for note in notes))
 
@@ -198,6 +200,18 @@ class OverviewHTTPTest(unittest.TestCase):
         self.assertEqual("youdoo", payload["meta"]["entity_id"])
         self.assertEqual("degraded", payload["meta"]["data_quality"])
 
+    def test_context_exposes_real_user_entities_and_ranges(self) -> None:
+        with mock.patch("yuqing.load_watch", return_value=WATCH):
+            status, _, body = self.request(
+                "/api/v1/context", headers=self.remote_headers(authenticated=True),
+            )
+
+        payload = json.loads(body)
+        self.assertEqual(200, status)
+        self.assertEqual("测试用户", payload["data"]["user"]["name"])
+        self.assertEqual(["youdoo", "competitor"], [x["id"] for x in payload["data"]["entities"]])
+        self.assertEqual(["7d", "30d", "90d"], [x["value"] for x in payload["data"]["ranges"]])
+
     def test_unauthenticated_and_invalid_requests_return_json_errors(self) -> None:
         status, _, body = self.request(
             "/api/v1/overview", headers=self.remote_headers(authenticated=False),
@@ -212,6 +226,17 @@ class OverviewHTTPTest(unittest.TestCase):
         self.assertEqual(400, status)
         self.assertEqual("INVALID_PARAMETER", json.loads(body)["error"]["code"])
 
+    def test_readiness_checks_overview_without_oauth(self) -> None:
+        with mock.patch("yuqing.load_watch", return_value=WATCH):
+            status, _, body = self.request(
+                "/api/v1/readiness", headers=self.remote_headers(authenticated=False),
+            )
+
+        payload = json.loads(body)
+        self.assertEqual(200, status)
+        self.assertTrue(payload["data"]["ready"])
+        self.assertEqual(2, payload["data"]["schema_version"])
+
     def test_workbench_default_and_legacy_dashboards_remain_available_locally(self) -> None:
         local_headers = {"Host": "127.0.0.1:8000"}
         for path in ("/", "/v2"):
@@ -219,35 +244,44 @@ class OverviewHTTPTest(unittest.TestCase):
                 status, _, body = self.request(path, headers=local_headers)
                 self.assertEqual(200, status)
                 self.assertIn(b'id="view-overview"', body)
-                self.assertIn(b'/v2/assets/styles.css', body)
-                self.assertIn(b'/v2/assets/app.js', body)
-                self.assertIn(b'/v2/assets/views/review.js', body)
+                self.assertIn(b'/assets/styles.css', body)
+                self.assertIn(b'/assets/app.js', body)
+                self.assertIn(b'/assets/views/review.js', body)
+                self.assertIn(b'/assets/views/reports.js', body)
+                self.assertIn(b'/assets/views/watch.js', body)
                 self.assertNotIn(b'id="view-knowledge"', body)
                 self.assertNotIn(b'id="view-integrations"', body)
                 self.assertNotIn("审核流程说明".encode("utf-8"), body)
 
-        for asset, expected_type in (
+        expected_assets = (
             ("styles.css", "text/css; charset=utf-8"),
             ("api.js", "text/javascript; charset=utf-8"),
             ("app.js", "text/javascript; charset=utf-8"),
             ("views/overview.js", "text/javascript; charset=utf-8"),
             ("views/review.js", "text/javascript; charset=utf-8"),
-        ):
-            with self.subTest(asset=asset):
-                status, headers, body = self.request(f"/v2/assets/{asset}", headers=local_headers)
-                self.assertEqual(200, status)
-                self.assertEqual(expected_type, headers["Content-Type"])
-                self.assertTrue(body)
+            ("views/reports.js", "text/javascript; charset=utf-8"),
+            ("views/watch.js", "text/javascript; charset=utf-8"),
+        )
+        for prefix in ("/assets", "/v2/assets"):
+            for asset, expected_type in expected_assets:
+                with self.subTest(prefix=prefix, asset=asset):
+                    status, headers, body = self.request(f"{prefix}/{asset}", headers=local_headers)
+                    self.assertEqual(200, status)
+                    self.assertEqual(expected_type, headers["Content-Type"])
+                    self.assertTrue(body)
 
-        status, _, app_body = self.request("/v2/assets/app.js", headers=local_headers)
+        status, _, app_body = self.request("/assets/app.js", headers=local_headers)
         self.assertEqual(200, status)
         app_text = app_body.decode("utf-8")
         self.assertRegex(app_text, r"\{id:'review'[^}]*badgeFn:'pendingReviewCount'")
-        for view_id in ("reports", "config"):
-            self.assertRegex(app_text, rf"\{{id:'{re.escape(view_id)}'[^}}]*disabled:true")
-        self.assertIn('disabled aria-disabled="true"', app_text)
+        self.assertRegex(app_text, r"\{id:'reports'[^}]*label:'报告中心'[^}]*\}")
+        self.assertNotRegex(app_text, r"\{id:'reports'[^}]*disabled:true")
+        self.assertRegex(app_text, r"\{id:'config'[^}]*label:'监控配置'[^}]*\}")
+        self.assertNotRegex(app_text, r"\{id:'config'[^}]*disabled:true")
+        for removed_mock in ("var USERS", "var PLATFORMS", "var ALERTS", "var REPORTS", "var BACKLOG"):
+            self.assertNotIn(removed_mock, app_text)
 
-        status, _, overview_body = self.request("/v2/assets/views/overview.js", headers=local_headers)
+        status, _, overview_body = self.request("/assets/views/overview.js", headers=local_headers)
         self.assertEqual(200, status)
         self.assertIn('disabled aria-disabled="true"', overview_body.decode("utf-8"))
 

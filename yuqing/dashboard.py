@@ -1462,18 +1462,42 @@ def make_handler(db: str):
             return _mutation_allowed(self)
 
         def _handle_api_v1_get(self, u) -> None:
-            from .api.overview import RANGES, build_overview, resolve_entity
+            from .api.overview import RANGES, build_overview, configured_entities, resolve_entity
             from .api.responses import APIError, enum_value, query_value, success_payload
 
+            if u.path == "/api/v1/readiness":
+                try:
+                    from . import load_watch
+                    watch = load_watch()
+                    store = Store(db)
+                    try:
+                        data, quality, notes = build_overview(store, watch, range_name="7d")
+                        schema_version = store.schema_version()
+                    finally:
+                        store.close()
+                    if schema_version != 2 or not (_WORKBENCH_DIR / "index.html").is_file():
+                        raise RuntimeError("delivery baseline unavailable")
+                except Exception:
+                    self._send_api_error("NOT_READY", "服务尚未就绪", 503)
+                    return
+                self._send_json(success_payload(
+                    {"ready": True, "schema_version": schema_version},
+                    entity_id=data["entity"]["id"], data_quality=quality,
+                    quality_notes=notes,
+                ))
+                return
             if self._api_principal() is None:
                 self._send_api_error("UNAUTHORIZED", "请先登录", 401)
                 return
             incident_match = re.fullmatch(r"/api/v1/incidents/([0-9A-Za-z_-]+)", u.path)
+            report_match = re.fullmatch(r"/api/v1/reports/([^/]+)", u.path)
+            document_match = re.fullmatch(r"/api/v1/docs/([0-9a-f]{6,16})", u.path)
             if u.path not in {
                 "/api/v1/overview", "/api/v1/collection/status",
                 "/api/v1/collection/login-status", "/api/v1/analysis", "/api/v1/incidents",
-                "/api/v1/backlog", "/api/v1/backlog.csv", "/api/v1/reviews",
-            } and incident_match is None:
+                "/api/v1/backlog", "/api/v1/backlog.csv", "/api/v1/reviews", "/api/v1/reports",
+                "/api/v1/context", "/api/v1/watch", "/api/v1/keywords", "/api/v1/seeds",
+            } and incident_match is None and report_match is None and document_match is None:
                 self._send_api_error("NOT_FOUND", "接口不存在", 404)
                 return
 
@@ -1482,7 +1506,35 @@ def make_handler(db: str):
                 requested_entity = query_value(query, "entity_id")
                 from . import load_watch
                 watch = load_watch()
-                if u.path == "/api/v1/reviews":
+                if u.path == "/api/v1/context":
+                    resolved_id, entity_name = resolve_entity(watch, requested_entity)
+                    data = {
+                        "entity": {"id": resolved_id, "name": entity_name},
+                        "entities": configured_entities(watch),
+                        "ranges": [
+                            {"value": "7d", "label": "近 7 天"},
+                            {"value": "30d", "label": "近 30 天"},
+                            {"value": "90d", "label": "近 90 天"},
+                        ],
+                        "user": self._api_principal(),
+                    }
+                    quality, quality_notes = "ok", []
+                elif u.path in {"/api/v1/watch", "/api/v1/keywords", "/api/v1/seeds"}:
+                    from .api.watch import build_keywords, build_seeds, build_watch_config
+                    if u.path == "/api/v1/watch":
+                        data = build_watch_config(watch, entity_id=requested_entity)
+                    else:
+                        store = Store(db)
+                        try:
+                            data = (
+                                build_keywords(store, watch, entity_id=requested_entity)
+                                if u.path == "/api/v1/keywords"
+                                else build_seeds(store, watch, entity_id=requested_entity)
+                            )
+                        finally:
+                            store.close()
+                    quality, quality_notes = "ok", []
+                elif u.path == "/api/v1/reviews":
                     from .api.reviews import CONFIDENCE_BUCKETS, REVIEW_STATUSES, build_reviews
                     status = enum_value(query, "status", REVIEW_STATUSES, default="pending")
                     confidence = enum_value(
@@ -1546,18 +1598,18 @@ def make_handler(db: str):
                     quality_notes = [] if bridge_ok else [bridge_message]
                 elif u.path in {"/api/v1/backlog", "/api/v1/backlog.csv"}:
                     from .api.backlog import backlog_csv as build_backlog_csv, build_backlog
+                    range_name = enum_value(query, "range", RANGES, default="30d")
                     if u.path == "/api/v1/backlog.csv":
                         store = Store(db)
                         try:
                             csv_text, csv_entity_id = build_backlog_csv(
-                                store, watch, entity_id=requested_entity,
+                                store, watch, entity_id=requested_entity, range_name=range_name,
                             )
                         finally:
                             store.close()
                         data = {"_csv": csv_text, "entity": {"id": csv_entity_id}}
                         quality, quality_notes = "ok", []
                     else:
-                        range_name = enum_value(query, "range", RANGES, default="30d")
                         store = Store(db)
                         try:
                             data, quality, quality_notes = build_backlog(
@@ -1565,6 +1617,28 @@ def make_handler(db: str):
                             )
                         finally:
                             store.close()
+                elif u.path == "/api/v1/reports" or report_match is not None or document_match is not None:
+                    from .api.reports import (
+                        build_report_detail, build_report_list, build_source_document,
+                    )
+                    store = Store(db)
+                    try:
+                        if report_match is not None:
+                            data, quality, quality_notes = build_report_detail(
+                                store, watch, unquote(report_match.group(1)),
+                                entity_id=requested_entity,
+                            )
+                        elif document_match is not None:
+                            data, quality, quality_notes = build_source_document(
+                                store, watch, document_match.group(1),
+                                entity_id=requested_entity,
+                            )
+                        else:
+                            data, quality, quality_notes = build_report_list(
+                                store, watch, entity_id=requested_entity,
+                            )
+                    finally:
+                        store.close()
                 else:
                     from .api.incidents import build_incident_detail, build_incident_list
                     store = Store(db)
@@ -1620,6 +1694,7 @@ def make_handler(db: str):
                             re.fullmatch(r"/api/v1/reviews/([0-9A-Za-z_-]+)", u.path))
             if u.path not in {
                 "/api/v1/collection/run", "/api/v1/collection/stop", "/api/v1/reviews/batch",
+                "/api/v1/reports/generate", "/api/v1/keywords", "/api/v1/seeds",
             } and incident_match is None and review_match is None:
                 self._send_api_error("NOT_FOUND", "接口不存在", 404)
                 return
@@ -1708,6 +1783,58 @@ def make_handler(db: str):
                     return
                 self._send_json(success_payload(data, entity_id=entity_id, data_quality="ok"))
                 return
+            if u.path in {"/api/v1/keywords", "/api/v1/seeds"}:
+                from .api.watch import mutate_keyword, mutate_seed
+                try:
+                    body = json_body(self)
+                    requested_entity = str(body.get("entity_id") or "").strip() or None
+                    resolved_entity_id, _ = resolve_entity(watch, requested_entity)
+                    store = Store(db)
+                    try:
+                        if u.path == "/api/v1/keywords":
+                            result = mutate_keyword(
+                                store, watch, body, entity_id=requested_entity,
+                            )
+                        else:
+                            result, watch = mutate_seed(
+                                store, watch, body, entity_id=requested_entity,
+                            )
+                    finally:
+                        store.close()
+                except APIError as exc:
+                    self._send_api_error(exc.code, exc.message, exc.status)
+                    return
+                except Exception:
+                    self._send_api_error("INTERNAL_ERROR", "监控配置操作失败", 500)
+                    return
+                self._send_json(success_payload(
+                    {"entity": {"id": resolved_entity_id}, "result": result},
+                    entity_id=resolved_entity_id, data_quality="ok",
+                ))
+                return
+            if u.path == "/api/v1/reports/generate":
+                from .api.reports import generate_report
+                try:
+                    body = json_body(self)
+                    requested_entity = str(body.get("entity_id") or "").strip() or None
+                    store = Store(db)
+                    try:
+                        data, quality, quality_notes = generate_report(
+                            store, watch, entity_id=requested_entity,
+                        )
+                    finally:
+                        store.close()
+                except APIError as exc:
+                    self._send_api_error(exc.code, exc.message, exc.status)
+                    return
+                except Exception:
+                    self._send_api_error("INTERNAL_ERROR", "报告生成失败", 500)
+                    return
+                self._send_json(success_payload(
+                    data, entity_id=data["entity"]["id"], data_quality=quality,
+                    quality_notes=quality_notes,
+                ), 201)
+                return
             if u.path == "/api/v1/collection/run":
                 execution = execution_environment()
                 if not execution["can_run"]:
@@ -1720,6 +1847,33 @@ def make_handler(db: str):
                     self._send_api_error("NOT_RUNNING", result["message"], 409)
                     return
             self._send_json(success_payload(result, entity_id=entity_id, data_quality="ok"))
+
+        def _handle_api_v1_put(self, u) -> None:
+            from .api.responses import APIError, json_body, success_payload
+
+            if u.path != "/api/v1/watch":
+                self._send_api_error("NOT_FOUND", "接口不存在", 404)
+                return
+            if not self._api_mutation_allowed():
+                self._send_api_error("FORBIDDEN", "无权执行该操作", 403)
+                return
+            try:
+                from . import load_watch
+                from .api.overview import resolve_entity
+                from .api.watch import build_watch_config, update_watch_config
+                body = json_body(self)
+                current = load_watch()
+                updated = update_watch_config(current, body)
+                requested_entity = str(body.get("entity_id") or "").strip() or None
+                entity_id, _ = resolve_entity(updated, requested_entity)
+                data = build_watch_config(updated, entity_id=entity_id)
+            except APIError as exc:
+                self._send_api_error(exc.code, exc.message, exc.status)
+                return
+            except Exception:
+                self._send_api_error("CONFIG_WRITE_FAILED", "监控配置保存失败", 500)
+                return
+            self._send_json(success_payload(data, entity_id=entity_id, data_quality="ok"))
 
         def _redirect(self, location: str, set_cookie: str = ""):
             """302 跳转，可带 Set-Cookie（登录建会话/登出清会话）。"""
@@ -1791,10 +1945,14 @@ def make_handler(db: str):
                     self._redirect(f"/auth/login?next={quote(self.path, safe='')}"); return
                 self._send_workbench_asset("index.html")
                 return
-            if u.path.startswith("/v2/assets/"):
+            asset_prefix = next(
+                (prefix for prefix in ("/assets/", "/v2/assets/") if u.path.startswith(prefix)),
+                None,
+            )
+            if asset_prefix is not None:
                 if self._api_principal() is None:
                     self.send_error(401); return
-                self._send_workbench_asset(u.path[len("/v2/assets/"):])
+                self._send_workbench_asset(u.path[len(asset_prefix):])
                 return
             if u.path == "/api/run/status":
                 if not (_write_allowed(self) or _require_auth(self)):
@@ -2063,6 +2221,7 @@ def make_handler(db: str):
                     self.wfile.write(payload)
                 finally:
                     store.close()
+
             elif u.path == "/api/annotate":
                 # 多维标注落库 + 圈词进关键词库待审（product_name 额外进种子建议，扩召回）
                 if not _mutation_allowed(self):
@@ -2199,6 +2358,12 @@ def make_handler(db: str):
                     store.close()
             else:
                 self.send_error(404)
+
+        def do_PUT(self):
+            u = urlparse(self.path)
+            if u.path.startswith("/api/v1/"):
+                self._handle_api_v1_put(u); return
+            self.send_error(404)
 
         def log_message(self, *a):  # 静音默认日志
             pass

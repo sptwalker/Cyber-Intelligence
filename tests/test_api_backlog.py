@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import io
+import datetime as dt
 import json
 import os
 import tempfile
@@ -25,16 +26,22 @@ WATCH = {
 def seed(path: str) -> None:
     store = Store(path)
     try:
-        doc = CleanDoc.build(
-            platform="weibo", native_id="bug-1", entity_id="youdoo", text="系统频繁死机",
-            fetched_at="2026-07-13T10:00:00+08:00", likes=10, comments=5,
-        )
-        doc.is_complaint = True
-        store.add_clean(doc)
-        store.add_feature(doc.doc_id, {
-            "polarity": "neg", "topic_label": "系统稳定性", "risk": 50,
-            "signals": {"bug": True},
-        })
+        today = dt.date.today()
+        for native_id, topic, day in (
+            ("bug-1", "系统稳定性", today),
+            ("bug-old", "历史兼容性", today - dt.timedelta(days=40)),
+        ):
+            doc = CleanDoc.build(
+                platform="weibo", native_id=native_id, entity_id="youdoo", text=topic,
+                publish_ts=f"{day.isoformat()}T09:00:00+08:00",
+                fetched_at=f"{today.isoformat()}T10:00:00+08:00", likes=10, comments=5,
+            )
+            doc.is_complaint = True
+            store.add_clean(doc)
+            store.add_feature(doc.doc_id, {
+                "polarity": "neg", "topic_label": topic, "risk": 50,
+                "signals": {"bug": True},
+            })
         store.commit()
     finally:
         store.close()
@@ -80,6 +87,13 @@ class BacklogTest(unittest.TestCase):
         self.assertEqual(15, data["items"][0]["heat"])
         self.assertEqual("unknown", quality)
         self.assertTrue(notes)
+
+        store = Store(self.db)
+        try:
+            long_range, _, _ = build_backlog(store, WATCH, range_name="90d")
+        finally:
+            store.close()
+        self.assertEqual(2, long_range["count"])
 
     def test_json_and_csv_endpoints(self) -> None:
         with mock.patch("yuqing.load_watch", return_value=WATCH):

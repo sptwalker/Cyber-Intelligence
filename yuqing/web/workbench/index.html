@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/v2/assets/styles.css">
+<link rel="stylesheet" href="/assets/styles.css">
 
 </head>
 <body>
@@ -19,7 +19,7 @@
     <div class="brand">Cyber-Intelligence · 舆情运营调度中心</div>
   </div>
   <div class="top-right">
-    <span class="user-chip"><span class="avatar-dot">张</span>张舆情 · 舆情监控岗</span>
+    <span class="user-chip" id="currentUserChip"><span class="avatar-dot">·</span>正在识别用户</span>
   </div>
 </header>
 
@@ -34,6 +34,7 @@
         <h1 id="viewTitle">总览 Dashboard</h1>
         <div class="header-sub" id="viewSubtitle">全平台舆情概况 · 实时更新</div>
       </div>
+      <div class="context-controls" id="contextControls"></div>
       <div class="search-box" onclick="openSearch()">🔍 搜索已加载内容 <span class="kbd">⌘K</span></div>
       <div class="health-strip" id="healthStrip"></div>
     </div>
@@ -45,7 +46,7 @@
       <div class="grid-2">
         <div class="card section-gap">
           <div class="panel-title">
-            <span>近 7 日情感趋势</span>
+            <span id="overviewTrendTitle">所选范围情感趋势</span>
             <span class="chart-legend" aria-label="图例">
               <span class="legend-item"><i class="legend-dot" style="background:#10b981"></i>正面</span>
               <span class="legend-item"><i class="legend-dot" style="background:#f43f5e"></i>负面</span>
@@ -155,38 +156,19 @@
     <!-- ---------- 6. 报告中心 ---------- -->
     <section class="view" id="view-reports">
       <div class="view-title-row">
-        <div class="tab-pills" id="reportsTabPills"></div>
+        <div id="reportsQuality"></div>
+        <button class="btn btn-primary" id="generateReportButton" onclick="generateReport()">生成当前报告</button>
       </div>
-
-      <div id="reportsTabWeekly">
-        <div class="grid-2">
-          <div>
-            <div class="card section-gap">
-              <div class="panel-title">周报历史 <small>点击切换预览</small></div>
-              <div id="reportHistoryList"></div>
-            </div>
-            <div class="card section-gap">
-              <div class="panel-title" id="reportPreviewTitle">可溯源周报预览</div>
-              <div class="report-preview" id="reportPreviewBody"></div>
-            </div>
-          </div>
-          <div>
-            <div class="card">
-              <div class="panel-title">一期范围</div>
-              <div class="hint-bar">报告中心一期只提供确定性生成、查看和来源溯源。多人审批和发布状态机将在后续阶段实现。</div>
-            </div>
-          </div>
+      <div class="reports-layout">
+        <div class="card reports-list-panel">
+          <div class="panel-title">报告历史 <small>确定性生成，按时间倒序</small></div>
+          <div id="reportHistoryList"></div>
+        </div>
+        <div class="card reports-preview-panel">
+          <div class="panel-title" id="reportPreviewTitle">报告预览</div>
+          <div class="report-preview" id="reportPreviewBody"></div>
         </div>
       </div>
-
-      <div id="reportsTabDaily" style="display:none;">
-        <div class="card">
-          <div class="panel-title">老板一句话日报</div>
-          <button class="btn btn-block" style="margin-bottom:10px;" disabled>手动生成接口接入中</button>
-          <div id="bossDailyList"></div>
-        </div>
-      </div>
-
     </section>
 
     <!-- ---------- 7. 诉求管理 ---------- -->
@@ -205,18 +187,40 @@
 
     <!-- ---------- 8. 监控配置 ---------- -->
     <section class="view" id="view-config">
+      <div class="view-title-row">
+        <div id="watchQuality"></div>
+        <div class="toolbar-actions">
+          <button class="btn" onclick="loadWatchConfig(true)">重新加载</button>
+          <button class="btn btn-primary" id="saveWatchButton" onclick="saveWatchConfig()">保存监控配置</button>
+        </div>
+      </div>
       <div class="card section-gap">
-        <div class="panel-title">关键词管理（watch.yaml）</div>
+        <div class="panel-title">监控对象词条 <small>别名用于召回；排除词用于防串味；危机词提高风险权重</small></div>
         <div id="entityConfigList"></div>
       </div>
-      <div class="card">
-        <div class="panel-title">平台开关与调度</div>
-        <div style="overflow-x:auto;">
-          <table class="data-table">
-            <thead><tr><th>平台</th><th>启用</th><th>调度频率</th></tr></thead>
-            <tbody id="platformScheduleBody"></tbody>
-          </table>
+      <div class="card section-gap">
+        <div class="panel-title">采集平台 <small>仅控制下轮采集是否包含该平台</small></div>
+        <div class="platform-toggle-grid" id="platformScheduleBody"></div>
+      </div>
+      <div class="grid-2 section-gap">
+        <div class="card">
+          <div class="panel-title">关键词库</div>
+          <div class="keyword-add-row">
+            <input id="keywordWord" maxlength="100" placeholder="输入关键词">
+            <select id="keywordTag"></select>
+            <input id="keywordWeight" type="number" min="0" max="1" step="0.1" value="1" aria-label="权重">
+            <button class="btn btn-primary" onclick="addKeyword()">添加</button>
+          </div>
+          <div id="keywordList"></div>
         </div>
+        <div class="card">
+          <div class="panel-title">关键词建议 <small>批准后进入正式词库</small></div>
+          <div id="keywordSuggestionList"></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="panel-title"><span>种子建议 <small>批准后加入实体 aliases</small></span><button class="btn btn-sm" onclick="mineSeeds()">生成建议</button></div>
+        <div id="seedSuggestionList"></div>
       </div>
     </section>
 
@@ -248,15 +252,17 @@
 
 <div class="toast-container" id="toastContainer"></div>
 
-<script src="/v2/assets/api.js"></script>
-<script src="/v2/assets/state.js"></script>
-<script src="/v2/assets/app.js"></script>
-<script src="/v2/assets/views/overview.js"></script>
-<script src="/v2/assets/views/collect.js"></script>
-<script src="/v2/assets/views/review.js"></script>
-<script src="/v2/assets/views/analysis.js"></script>
-<script src="/v2/assets/views/incidents.js"></script>
-<script src="/v2/assets/views/backlog.js"></script>
+<script src="/assets/api.js"></script>
+<script src="/assets/state.js"></script>
+<script src="/assets/app.js"></script>
+<script src="/assets/views/overview.js"></script>
+<script src="/assets/views/collect.js"></script>
+<script src="/assets/views/review.js"></script>
+<script src="/assets/views/analysis.js"></script>
+<script src="/assets/views/incidents.js"></script>
+<script src="/assets/views/backlog.js"></script>
+<script src="/assets/views/reports.js"></script>
+<script src="/assets/views/watch.js"></script>
 
 </body>
 </html>
