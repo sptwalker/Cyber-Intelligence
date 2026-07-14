@@ -1694,7 +1694,8 @@ def make_handler(db: str):
                             re.fullmatch(r"/api/v1/reviews/([0-9A-Za-z_-]+)", u.path))
             if u.path not in {
                 "/api/v1/collection/run", "/api/v1/collection/stop", "/api/v1/reviews/batch",
-                "/api/v1/reports/generate", "/api/v1/keywords", "/api/v1/seeds",
+                "/api/v1/collection/login/open", "/api/v1/reports/generate",
+                "/api/v1/keywords", "/api/v1/seeds",
             } and incident_match is None and review_match is None:
                 self._send_api_error("NOT_FOUND", "接口不存在", 404)
                 return
@@ -1782,6 +1783,24 @@ def make_handler(db: str):
                     self._send_api_error("INTERNAL_ERROR", "服务暂时不可用", 500)
                     return
                 self._send_json(success_payload(data, entity_id=entity_id, data_quality="ok"))
+                return
+            if u.path == "/api/v1/collection/login/open":
+                from . import login
+                try:
+                    platform = str(json_body(self).get("platform") or "").strip()
+                    if platform not in login.LOGIN_URLS:
+                        raise APIError("INVALID_PARAMETER", "该平台不支持交互登录", 400)
+                    message = login.open_login(platform)
+                except APIError as exc:
+                    self._send_api_error(exc.code, exc.message, exc.status)
+                    return
+                except Exception as exc:
+                    self._send_api_error("COLLECTOR_UNAVAILABLE", str(exc)[:200], 409)
+                    return
+                self._send_json(success_payload(
+                    {"platform": platform, "message": message or "已打开登录页"},
+                    entity_id=entity_id, data_quality="ok",
+                ))
                 return
             if u.path in {"/api/v1/keywords", "/api/v1/seeds"}:
                 from .api.watch import mutate_keyword, mutate_seed

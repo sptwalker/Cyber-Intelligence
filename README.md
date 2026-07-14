@@ -55,8 +55,9 @@ python3 -c "from yuqing.dashboard import serve; serve(db='yuqing-demo.db')"
 
 监控对象配置在 [`yuqing/watch.yaml`](yuqing/watch.yaml)（实体/别名/否定词/危机词，git 版本化）。
 
-K8s 只承载工作台/API，不接管分析师本机 Chrome；opencli 采集继续在受控执行机运行，
-并通过一致的 SQLite 副本或单写者共享卷交付数据。部署边界与校验步骤见
+CCE 生产 Pod 使用两个独立容器：工作台负责 OAuth、SQLite、分析和报告，Collector
+sidecar 负责 Chromium、opencli、平台登录和原始抓取。两张镜像独立构建，Collector
+不直接写数据库；登录维护通过 `kubectl port-forward` 访问 noVNC。部署边界与操作步骤见
 [`deploy/k8s/README.md`](deploy/k8s/README.md)。
 
 ## 架构

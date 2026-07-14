@@ -156,6 +156,9 @@ def _parse_opencli_json(stdout: str, returncode: int, site: str, limit: int) -> 
 
 
 def _fetch_opencli(platform: str, keyword: str, limit: int) -> list[dict]:
+    from . import collector_client
+    if collector_client.enabled():
+        return collector_client.fetch(platform, keyword, limit)
     site = OPENCLI_SITE.get(platform)
     if not site:
         raise ValueError(f"平台 {platform} 无 opencli 后端，请走 Web/Jina 或提供 fixture")
@@ -168,6 +171,9 @@ def _fetch_opencli(platform: str, keyword: str, limit: int) -> list[dict]:
 
 def _fetch_opencli_userposts(site: str, user: str, limit: int) -> list[dict]:
     """跟踪指定 KOL/官号主页（user-posts 入口）。"""
+    from . import collector_client
+    if collector_client.enabled():
+        return collector_client.fetch(site, "", limit, entry="user-posts", user=user)
     out = subprocess.run(
         [_OPENCLI, site, "user-posts", user, "-f", "json"],
         capture_output=True, encoding="utf-8", errors="replace", timeout=120)
@@ -237,6 +243,9 @@ def _fetch_heimao(keyword: str, limit: int, *, pages: int = 1) -> list[dict]:
     上层记 status=error → 健康三态判 fail（"没抓到"≠"没负面"）。真实选择器/等待时机
     是"校准旋钮"，首次在本机跑通时按需微调。
     """
+    from . import collector_client
+    if collector_client.enabled():
+        return collector_client.fetch("heimao", keyword, limit)
     session = os.getenv("YUQING_OPENCLI_SESSION", "yuqing")
     items: list[dict] = []
     seen: set[str] = set()

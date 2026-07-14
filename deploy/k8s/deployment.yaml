@@ -7,6 +7,8 @@ metadata:
     app.kubernetes.io/name: cyber-intelligence
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app.kubernetes.io/name: cyber-intelligence
@@ -57,11 +59,12 @@ spec:
                   key: FEISHU_REDIRECT_URI
             - name: YUQING_WATCH_PATH
               value: /data/watch.yaml
-            # The dashboard pod never owns an analyst's Chrome/opencli session.
             - name: YUQING_ENABLE_COLLECTION
-              value: "false"
+              value: "true"
             - name: YUQING_COLLECTION_EXECUTION_MODE
-              value: kubernetes-dashboard
+              value: cce-collector-sidecar
+            - name: YUQING_COLLECTOR_URL
+              value: http://127.0.0.1:8788
           command:
             - python
             - -c
@@ -92,10 +95,66 @@ spec:
             limits:
               cpu: 500m
               memory: 512Mi
+        - name: cyber-intelligence-collector
+          image: swr.cn-south-1.myhuaweicloud.com/nexus-studio/cyber-intelligence-collector:prod-latest
+          imagePullPolicy: Always
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          ports:
+            - name: collector
+              containerPort: 8788
+              protocol: TCP
+            - name: novnc
+              containerPort: 6080
+              protocol: TCP
+          env:
+            - name: TZ
+              value: Asia/Shanghai
+            - name: YUQING_OPENCLI_SESSION
+              value: yuqing
+          readinessProbe:
+            exec:
+              command:
+                - /opt/venv/bin/python
+                - -c
+                - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8788/readyz', timeout=4)"
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 8
+            failureThreshold: 6
+          livenessProbe:
+            exec:
+              command:
+                - /opt/venv/bin/python
+                - -c
+                - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8788/healthz', timeout=4)"
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            timeoutSeconds: 8
+            failureThreshold: 3
+          volumeMounts:
+            - name: data
+              mountPath: /profile
+            - name: dshm
+              mountPath: /dev/shm
+          resources:
+            requests:
+              cpu: 300m
+              memory: 768Mi
+            limits:
+              cpu: "1500m"
+              memory: 2Gi
       volumes:
         - name: data
           persistentVolumeClaim:
             claimName: cyber-intelligence-data
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 512Mi
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim

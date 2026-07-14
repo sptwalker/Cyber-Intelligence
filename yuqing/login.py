@@ -38,6 +38,9 @@ def _session() -> str:
 
 def bridge_ok() -> tuple[bool, str]:
     """opencli 浏览器桥是否连着（extension connected）。返回 (ok, 说明)。"""
+    from . import collector_client
+    if collector_client.enabled():
+        return collector_client.bridge_status()
     try:
         out = subprocess.run([_OPENCLI, "doctor"], capture_output=True, text=True,
                              encoding="utf-8", errors="replace", timeout=30)
@@ -52,6 +55,19 @@ def _auth_status(sites: list[str]) -> dict[str, dict]:
     """一次批量查 adapter 平台登录态。返回 {site: {logged_in, identity}}。失败返回空。"""
     if not sites:
         return {}
+    from . import collector_client
+    if collector_client.enabled():
+        try:
+            rows = collector_client.login_status(sites)
+            return {
+                row["platform"]: {
+                    "logged_in": bool(row.get("logged_in")),
+                    "identity": row.get("identity") or "",
+                }
+                for row in rows if row.get("platform") in sites
+            }
+        except Exception:
+            return {}
     try:
         out = subprocess.run(
             [_OPENCLI, "auth", "status", "--site", ",".join(sites), "--format", "json"],
@@ -65,6 +81,18 @@ def _auth_status(sites: list[str]) -> dict[str, dict]:
 
 def _heimao_logged_in() -> tuple[bool, str]:
     """浏览器桥打开黑猫搜索页，看是否登录墙。慢（~6s）。返回 (logged_in, error)。"""
+    from . import collector_client
+    if collector_client.enabled():
+        try:
+            row = next((
+                item for item in collector_client.login_status(["heimao"])
+                if item.get("platform") == "heimao"
+            ), None)
+            if row is None:
+                return False, "Collector 未返回黑猫登录状态"
+            return bool(row.get("logged_in")), str(row.get("error") or "")
+        except Exception as exc:
+            return False, str(exc)[:120]
     try:
         s = _session()
         _opencli_browser(s, "open", "https://tousu.sina.com.cn/index/search/?keywords=test")
@@ -98,11 +126,15 @@ def status(platforms: list[str]) -> list[dict]:
     return result
 
 
-def open_login(platform: str) -> None:
+def open_login(platform: str) -> str:
     """在桥接的 Chrome 里打开平台登录页。platform 必须是 LOGIN_URLS 的 key（防注入）。"""
     if platform not in LOGIN_URLS:
         raise ValueError(f"未知平台：{platform}")
+    from . import collector_client
+    if collector_client.enabled():
+        return collector_client.open_login(platform)
     _opencli_browser(_session(), "open", LOGIN_URLS[platform])
+    return f"已在浏览器打开 {platform} 登录页"
 
 
 def _selfcheck() -> None:

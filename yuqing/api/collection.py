@@ -20,15 +20,27 @@ def execution_environment() -> dict[str, Any]:
     in_kubernetes = bool(os.getenv("KUBERNETES_SERVICE_HOST"))
     configured = os.getenv("YUQING_ENABLE_COLLECTION")
     enabled = (not in_kubernetes) if configured is None else configured.lower() in {"1", "true", "yes", "on"}
-    opencli_available = bool(shutil.which(_OPENCLI))
+    from .. import collector_client
+    sidecar = collector_client.health() if collector_client.enabled() else None
+    opencli_available = (
+        bool(sidecar.get("opencli_available")) if sidecar is not None
+        else bool(shutil.which(_OPENCLI))
+    )
+    collector_available = bool(sidecar.get("ready")) if sidecar is not None else opencli_available
     mode = os.getenv("YUQING_COLLECTION_EXECUTION_MODE") or (
         "kubernetes-dashboard" if in_kubernetes else "dashboard-process"
     )
-    can_run = enabled and opencli_available
+    can_run = enabled and collector_available
     if can_run:
-        message = "采集将在当前看板进程所在主机执行，并复用该主机的 opencli/Chrome 登录态。"
+        message = (
+            "采集由同一 Pod 内的独立 Collector sidecar 执行，业务服务负责入库和分析。"
+            if sidecar is not None
+            else "采集将在当前看板进程所在主机执行，并复用该主机的 opencli/Chrome 登录态。"
+        )
     elif in_kubernetes and not enabled:
         message = "当前为云端看板环境；浏览器采集应在绑定 Chrome 的执行机运行。"
+    elif sidecar is not None and not collector_available:
+        message = str(sidecar.get("message") or "Collector sidecar 尚未就绪")
     elif not opencli_available:
         message = "当前主机未检测到 opencli，暂不能从工作台触发采集。"
     else:
@@ -37,6 +49,7 @@ def execution_environment() -> dict[str, Any]:
         "mode": mode,
         "can_run": can_run,
         "opencli_available": opencli_available,
+        "collector_available": collector_available,
         "in_kubernetes": in_kubernetes,
         "message": message,
     }

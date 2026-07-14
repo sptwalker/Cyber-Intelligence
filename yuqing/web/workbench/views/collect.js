@@ -44,7 +44,7 @@ function renderCollectTable(){
   }
   if(state.collection.status==='loading' && !state.collection.data){
     $('#collectionExecution').innerHTML = overviewStatePanel('loading', '正在检测采集环境和登录状态…');
-    $('#collectTableBody').innerHTML = '<tr><td colspan="6">' + overviewStatePanel('loading', '正在读取平台状态…') + '</td></tr>';
+    $('#collectTableBody').innerHTML = '<tr><td colspan="7">' + overviewStatePanel('loading', '正在读取平台状态…') + '</td></tr>';
     return;
   }
   if(state.collection.status==='error'){
@@ -61,7 +61,7 @@ function renderCollectTable(){
   renderCollectionExecution(data);
   var rows = data.platforms || [];
   if(!rows.length){
-    $('#collectTableBody').innerHTML = '<tr><td colspan="6">' + overviewStatePanel('empty', '监控配置中没有平台') + '</td></tr>';
+    $('#collectTableBody').innerHTML = '<tr><td colspan="7">' + overviewStatePanel('empty', '监控配置中没有平台') + '</td></tr>';
     return;
   }
   $('#collectTableBody').innerHTML = rows.map(function(item){
@@ -69,13 +69,18 @@ function renderCollectTable(){
     var loginText = item.login_required
       ? (login.logged_in ? '<span class="badge badge-green">已登录</span>' : '<span class="badge badge-amber">需登录</span>')
       : '<span class="badge badge-gray">免登录</span>';
+    var loginAction = item.login_required && !login.logged_in
+      ? '<button class="btn btn-sm" ' + (!state.collection.mutating && data.execution && data.execution.can_run ? '' : 'disabled')
+        + ' onclick="openPlatformLogin(\'' + esc(item.platform) + '\')">打开登录页</button>'
+      : '<span class="muted">—</span>';
     var fetched = item.n_fetched===null || item.n_fetched===undefined ? '—' : item.n_fetched + ' 条';
     return '<tr><td><b>' + esc(PLATFORM_LABELS[item.platform] || item.platform) + '</b></td>'
       + '<td>' + collectionHealthBadge(item.health) + '</td>'
       + '<td>' + esc(overviewFormatTime(item.ts)) + '</td>'
       + '<td>' + fetched + '</td>'
       + '<td>' + loginText + '</td>'
-      + '<td class="muted">' + esc(item.note || login.error || '—') + '</td></tr>';
+      + '<td class="muted">' + esc(item.note || login.error || '—') + '</td>'
+      + '<td>' + loginAction + '</td></tr>';
   }).join('');
 }
 
@@ -124,6 +129,17 @@ function stopCollectionRun(){
     WorkbenchAPI.invalidate('/api/v1/collection/status');
     state.collection.mutating = false;
     loadCollection(true, false);
+  }).catch(collectionMutationFailed);
+}
+
+function openPlatformLogin(platform){
+  if(state.collection.mutating) return;
+  state.collection.mutating = true;
+  renderCollectTable();
+  WorkbenchAPI.post('/api/v1/collection/login/open', {platform:platform}).then(function(payload){
+    state.collection.mutating = false;
+    showToast(payload.data.message || '已打开登录页，请完成登录后重新检测', 'green');
+    loadCollection(true, true);
   }).catch(collectionMutationFailed);
 }
 

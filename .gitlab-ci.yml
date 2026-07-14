@@ -11,10 +11,11 @@ default:
   - .gitlab-ci.yml
   - .trivyignore
   - Dockerfile
+  - Dockerfile.collector
   - pyproject.toml
   - deploy/**/*
   - yuqing/**/*
-  - scripts/ci/**/*
+  - scripts/**/*
 
 stages:
   - verify
@@ -106,6 +107,15 @@ build_image:
         -f Dockerfile
         .
 
+build_collector_image:
+  extends: .build_cce
+  script:
+    - docker buildx build
+        --push --provenance=false --platform linux/amd64
+        -t "${SWR_REGISTRY}/cyber-intelligence-collector:${IMAGE_TAG}"
+        -f Dockerfile.collector
+        .
+
 scan_trivy:
   stage: build
   image:
@@ -114,6 +124,7 @@ scan_trivy:
   extends: .pipeline_rules
   needs:
     - job: build_image
+    - job: build_collector_image
   variables:
     TRIVY_NO_PROGRESS: "true"
     TRIVY_SEVERITY: "HIGH,CRITICAL"
@@ -128,6 +139,7 @@ scan_trivy:
     - export TRIVY_PASSWORD="$SWR_PASSWORD"
   script:
     - trivy image --exit-code 1 --ignorefile .trivyignore "${SWR_REGISTRY}/cyber-intelligence:${IMAGE_TAG}"
+    - trivy image --exit-code 1 --ignorefile .trivyignore "${SWR_REGISTRY}/cyber-intelligence-collector:${IMAGE_TAG}"
 
 # ── deploy ─────────────────────────────────────────────────────────────────
 
@@ -137,6 +149,7 @@ deploy_cce:
   extends: .pipeline_rules
   needs:
     - job: build_image
+    - job: build_collector_image
     - job: scan_trivy
   retry: 0
   resource_group: cce-production
@@ -173,7 +186,10 @@ deploy_cce:
         --from-literal=FEISHU_REDIRECT_URI="https://cyber.youdoogo.com/auth/callback"
         --namespace=nexus-prod
         --dry-run=client -o yaml | kubectl apply -f -
-    - sed "s|cyber-intelligence:[^ ]*|cyber-intelligence:${IMAGE_TAG}|g" deploy/k8s/deployment.yaml | kubectl apply -f - -n nexus-prod
+    - sed
+        -e "s|cyber-intelligence:prod-latest|cyber-intelligence:${IMAGE_TAG}|g"
+        -e "s|cyber-intelligence-collector:prod-latest|cyber-intelligence-collector:${IMAGE_TAG}|g"
+        deploy/k8s/deployment.yaml | kubectl apply -f - -n nexus-prod
     - kubectl apply -f deploy/k8s/ingress.yaml -n nexus-prod
     - kubectl rollout status deployment/cyber-intelligence -n nexus-prod --timeout=3m
 

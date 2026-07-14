@@ -1,56 +1,62 @@
-# K8s deployment boundary
+# CCE workbench and Collector sidecar
 
-The phase-one Kubernetes workload is the authenticated workbench and API. It
-does not run browser collection and must not be given an analyst's Chrome
-profile or opencli session.
+The production pod contains two independently built containers:
 
-## Runtime ownership
-
-| Runtime | Owns | Must not own |
+| Container | Responsibility | Persistent state |
 |---|---|---|
-| K8s dashboard pod | OAuth, workbench/API, analysis reads and writes, reports, `/data/yuqing.db`, `/data/watch.yaml` | Chrome profile, opencli login session, interactive platform login |
-| Collector host | opencli, dedicated Chrome profile, platform login, scheduler or manual `yuqing.run` | Public dashboard ingress, production OAuth secrets |
+| `cyber-intelligence` | OAuth, workbench/API, SQLite writes, analysis, incidents and reports | `/data/yuqing.db`, `/data/watch.yaml` |
+| `cyber-intelligence-collector` | Chromium, opencli, platform login and raw fetching | `/profile/chromium` |
 
-`deployment.yaml` therefore sets:
+The Collector binds its HTTP and noVNC listeners to `127.0.0.1`. It is not
+published through the Kubernetes Service or public Ingress. The workbench calls
+it over the shared pod network through `YUQING_COLLECTOR_URL`.
 
-```text
-YUQING_ENABLE_COLLECTION=false
-YUQING_COLLECTION_EXECUTION_MODE=kubernetes-dashboard
-```
+The Collector never opens or writes SQLite. Raw items return to the workbench,
+which keeps the existing normalize, relevance, health and Store pipeline as the
+single database writer.
 
-The collection page reports this boundary and disables its start action. These
-settings remain explicit even when the image later happens to contain an
-`opencli` binary.
+## Interactive platform login
 
-## Phase-one data flow
-
-The collector and dashboard exchange only application data, not browser
-control. Use one of these operating modes:
-
-1. Run collection on a controlled host during a maintenance window, stop the
-   dashboard writer, copy `yuqing.db`, `yuqing.db-wal`, and `yuqing.db-shm` as a
-   consistent SQLite snapshot to the mounted `/data` volume, then restart the
-   dashboard.
-2. Run the collector on a host that mounts the same single-writer volume and
-   keep the dashboard read-only during collection. Do not mount one SQLite
-   database through two hosts or pods concurrently.
-
-The repository does not provide a remote collector RPC in phase one. If online
-collection from the workbench becomes required, design a separate authenticated
-collector service and durable job protocol before enabling the button in K8s.
-
-## Deployment checks
-
-After applying the manifests, verify:
+Use Kubernetes port forwarding when a platform needs QR code, SMS or manual
+login:
 
 ```bash
-kubectl -n nexus-prod exec deploy/cyber-intelligence -- \
-  env | grep '^YUQING_\(ENABLE_COLLECTION\|COLLECTION_EXECUTION_MODE\|WATCH_PATH\)='
-
-kubectl -n nexus-prod port-forward service/cyber-intelligence 8080:8080
-curl -fsS http://127.0.0.1:8080/api/v1/collection/status
+kubectl -n nexus-prod port-forward deployment/cyber-intelligence 6080:6080
 ```
 
-The response must contain `execution.mode=kubernetes-dashboard` and
-`execution.can_run=false`. Readiness remains independent at
-`/api/v1/readiness`.
+Open `http://127.0.0.1:6080/vnc.html`, then use the workbench collection page's
+"打开登录页" action. Complete login in the Collector Chromium window and click
+"重新检测" in the workbench.
+
+The browser profile is stored on the existing `cyber-intelligence-data` PVC, so
+pod recreation does not erase platform sessions. The Deployment uses the
+`Recreate` strategy to prevent two Chromium instances from locking the profile
+at the same time.
+
+Do not expose port 6080 through the public Ingress. Access is controlled by
+Kubernetes RBAC through `kubectl port-forward`.
+
+## CI delivery
+
+The pipeline builds and scans two images with the same immutable commit tag:
+
+```text
+cyber-intelligence:${IMAGE_TAG}
+cyber-intelligence-collector:${IMAGE_TAG}
+```
+
+Deployment waits for both images and for the complete two-container pod rollout.
+OpenCLI and its Browser Bridge extension are pinned in `Dockerfile.collector`.
+
+## Runtime checks
+
+```bash
+kubectl -n nexus-prod get pod -l app.kubernetes.io/name=cyber-intelligence
+kubectl -n nexus-prod logs deploy/cyber-intelligence -c cyber-intelligence-collector
+kubectl -n nexus-prod exec deploy/cyber-intelligence -c cyber-intelligence -- \
+  python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8788/healthz').read().decode())"
+```
+
+The health payload must report `opencli_available=true` and
+`browser_connected=true`. Platform-specific `logged_in=false` does not make the
+Collector unhealthy; it only disables successful collection for that platform.

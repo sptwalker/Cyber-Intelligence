@@ -98,6 +98,25 @@ class CollectionReadModelTest(unittest.TestCase):
         self.assertFalse(environment["can_run"])
         self.assertEqual("kubernetes-dashboard", environment["mode"])
 
+    def test_kubernetes_sidecar_enables_collection_when_ready(self) -> None:
+        with mock.patch.dict(os.environ, {
+            "KUBERNETES_SERVICE_HOST": "10.0.0.1",
+            "YUQING_ENABLE_COLLECTION": "true",
+            "YUQING_COLLECTION_EXECUTION_MODE": "cce-collector-sidecar",
+            "YUQING_COLLECTOR_URL": "http://127.0.0.1:8788",
+        }, clear=False), mock.patch(
+            "yuqing.collector_client.health",
+            return_value={
+                "ready": True, "opencli_available": True,
+                "browser_connected": True, "message": "ready",
+            },
+        ):
+            environment = execution_environment()
+
+        self.assertTrue(environment["can_run"])
+        self.assertTrue(environment["collector_available"])
+        self.assertEqual("cce-collector-sidecar", environment["mode"])
+
 
 class CollectionHTTPTest(unittest.TestCase):
     PUBLIC_HOST = "cyber.youdoogo.com"
@@ -213,6 +232,20 @@ class CollectionHTTPTest(unittest.TestCase):
             )
         self.assertEqual(409, status)
         self.assertEqual("COLLECTION_UNAVAILABLE", json.loads(body)["error"]["code"])
+
+    def test_platform_login_opens_on_collector(self) -> None:
+        body = json.dumps({"platform": "weibo"}).encode("utf-8")
+        with mock.patch("yuqing.load_watch", return_value=WATCH), \
+                mock.patch("yuqing.login.open_login", return_value="已打开 Collector 登录页"):
+            status, _, response = self.request(
+                "POST", "/api/v1/collection/login/open",
+                headers=self.headers(origin=self.PUBLIC_ORIGIN), body=body,
+            )
+
+        payload = json.loads(response)
+        self.assertEqual(200, status)
+        self.assertEqual("weibo", payload["data"]["platform"])
+        self.assertIn("Collector", payload["data"]["message"])
 
 
 if __name__ == "__main__":
