@@ -1,0 +1,2543 @@
+<!DOCTYPE html>
+<!-- Historical UI prototype. The production workbench lives in yuqing/web/workbench/. -->
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cyber-Intelligence · UI Prototype V2</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg-root:#f8f9fa;
+  --bg-surface:#ffffff;
+  --bg-elevated:#f1f3f5;
+  --border:#dee2e6;
+  --text-primary:#111111;
+  --text-secondary:#495057;
+  --accent:#1c7ed6;
+  --accent-dark:#1971c2;
+  --green:#2b8a3e;
+  --green-bg:#ebfbee;
+  --red:#c92a2a;
+  --red-bg:#fff5f5;
+  --amber:#e67700;
+  --amber-bg:#fff9db;
+  --blue-bg:#e7f5ff;
+  --gray-bg:#f1f3f5;
+}
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;}
+body{
+  background:var(--bg-root);
+  color:var(--text-primary);
+  font-family:'PingFang SC','Microsoft YaHei','Inter',sans-serif;
+  font-size:14px;
+  line-height:1.5;
+  -webkit-font-smoothing:antialiased;
+}
+h1,h2,h3,h4,p,ul,ol{margin:0;}
+ul{padding:0;list-style:none;}
+button{font-family:inherit;}
+::-webkit-scrollbar{width:8px;height:8px;}
+::-webkit-scrollbar-thumb{background:#ced4da;border-radius:4px;}
+
+/* ---------- 顶部 Tab 导航（唯一允许深色区域） ---------- */
+.top-tabs{
+  height:42px;background:#14161c;display:flex;align-items:center;
+  padding:0 14px;color:#fff;gap:18px;position:sticky;top:0;z-index:60;
+}
+.top-tabs .brand{font-weight:700;font-size:13px;color:#fff;white-space:nowrap;letter-spacing:.02em;}
+.hamburger{display:none;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.18);color:#fff;border-radius:6px;width:28px;height:28px;cursor:pointer;font-size:14px;}
+.tab-list{display:flex;gap:2px;flex:1;overflow-x:auto;height:100%;}
+.top-tab{
+  background:transparent;border:none;color:#a6adb8;padding:0 11px;height:42px;
+  font-size:12.5px;cursor:pointer;white-space:nowrap;border-bottom:2px solid transparent;
+  display:flex;align-items:center;gap:5px;
+}
+.top-tab:hover{color:#fff;}
+.top-tab.active{color:#fff;border-bottom-color:var(--accent);background:rgba(255,255,255,.06);font-weight:600;}
+.top-right{display:flex;align-items:center;gap:10px;font-size:12px;color:#ced4da;flex-shrink:0;}
+.user-chip{display:flex;align-items:center;gap:6px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.18);border-radius:20px;padding:3px 10px 3px 4px;font-size:11.5px;white-space:nowrap;}
+.user-chip .avatar-dot{width:20px;height:20px;border-radius:50%;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;}
+#clock{font-variant-numeric:tabular-nums;min-width:80px;text-align:right;}
+.icon-btn-dark{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.18);color:#fff;border-radius:6px;padding:5px 10px;font-size:12px;cursor:pointer;white-space:nowrap;}
+.icon-btn-dark:hover{background:rgba(255,255,255,.16);}
+
+/* ---------- 主体布局 ---------- */
+.app-body{display:flex;align-items:stretch;min-height:calc(100vh - 42px);}
+.sidebar{
+  width:220px;flex-shrink:0;background:#fff;border-right:1px solid var(--border);
+  padding:14px 0;overflow-y:auto;
+}
+.side-group{margin-bottom:16px;}
+.side-group-title{font-size:10.5px;color:#adb5bd;text-transform:uppercase;letter-spacing:.06em;padding:0 16px;margin-bottom:6px;font-weight:700;}
+.side-item{
+  display:flex;align-items:center;gap:10px;width:100%;background:none;border:none;
+  text-align:left;padding:9px 16px;font-size:13.5px;color:var(--text-secondary);
+  cursor:pointer;position:relative;
+}
+.side-item:hover{background:var(--bg-elevated);}
+.side-item.active{background:var(--blue-bg);color:var(--accent);font-weight:700;}
+.side-item.active::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--accent);}
+.side-icon{font-size:14px;width:16px;text-align:center;flex-shrink:0;}
+.side-badge{margin-left:auto;background:var(--red-bg);color:var(--red);font-size:10.5px;font-weight:700;padding:1px 6px;border-radius:10px;}
+.sidebar-footer{padding:12px 16px;border-top:1px solid var(--border);margin-top:6px;font-size:11.5px;color:var(--text-secondary);}
+.sidebar-footer b{color:var(--text-primary);display:block;font-size:12.5px;margin-bottom:2px;}
+
+.content{flex:1;min-width:0;display:flex;flex-direction:column;}
+.content-header{
+  background:#fff;border-bottom:1px solid var(--border);padding:13px 24px;
+  display:flex;align-items:center;gap:18px;flex-wrap:wrap;position:sticky;top:42px;z-index:40;
+}
+.content-header h1{font-size:17px;font-weight:800;white-space:nowrap;}
+.header-sub{font-size:11.5px;color:var(--text-secondary);margin-top:2px;}
+.search-box{
+  background:var(--bg-elevated);border:1px solid var(--border);border-radius:8px;
+  padding:7px 12px;font-size:12.5px;color:var(--text-secondary);cursor:pointer;
+  display:flex;align-items:center;gap:6px;min-width:190px;
+}
+.search-box:hover{border-color:var(--accent);color:var(--text-primary);}
+.search-box input{border:none;outline:none;background:transparent;font-size:12.5px;font-family:inherit;flex:1;color:var(--text-primary);}
+.kbd{background:#fff;border:1px solid var(--border);border-radius:4px;padding:0 5px;font-size:10.5px;color:var(--text-secondary);font-family:monospace;}
+.health-strip{display:flex;gap:8px;margin-left:auto;flex-wrap:wrap;}
+.health-pill{
+  display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text-secondary);
+  background:var(--bg-elevated);border-radius:12px;padding:3px 9px 3px 7px;cursor:default;
+}
+.health-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;}
+.health-dot.ok{background:var(--green);}
+.health-dot.suspect{background:var(--amber);}
+.health-dot.fail{background:var(--red);}
+
+.view{display:none;padding:20px 24px 60px;}
+.view.active{display:block;}
+.view-title-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;}
+.view-title-row h2{font-size:15px;font-weight:800;}
+
+/* ---------- 通用组件 ---------- */
+.card{background:#fff;border:1px solid var(--border);border-radius:10px;padding:16px;}
+.panel-title{font-size:14px;font-weight:800;margin:0 0 12px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;}
+.panel-title small{font-size:11.5px;color:var(--text-secondary);font-weight:500;}
+.muted{color:var(--text-secondary);}
+
+.grid-2{display:grid;grid-template-columns:2fr 1fr;gap:16px;align-items:start;}
+.grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;}
+
+.stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:18px;}
+.stat-card{background:#fff;border:1px solid var(--border);border-radius:10px;padding:16px;}
+.stat-label{font-size:12px;color:var(--text-secondary);margin-bottom:8px;}
+.stat-value{font-size:26px;font-weight:800;letter-spacing:-.02em;}
+.stat-trend{font-size:12px;margin-top:7px;display:inline-flex;align-items:center;gap:3px;font-weight:600;}
+.stat-trend.up{color:var(--green);}
+.stat-trend.down{color:var(--red);}
+.stat-trend.flat{color:var(--text-secondary);}
+.sparkline-wrap{margin-top:6px;line-height:0;}
+
+.badge{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;padding:2px 8px;border-radius:5px;white-space:nowrap;}
+.badge-green{background:var(--green-bg);color:var(--green);}
+.badge-red{background:var(--red-bg);color:var(--red);}
+.badge-amber{background:var(--amber-bg);color:var(--amber);}
+.badge-blue{background:var(--blue-bg);color:var(--accent);}
+.badge-gray{background:var(--bg-elevated);color:var(--text-secondary);}
+.badge-outline{background:#fff;border:1px solid var(--border);color:var(--text-secondary);}
+
+.btn{border-radius:7px;border:1px solid var(--border);background:#fff;padding:6px 14px;font-size:12.5px;cursor:pointer;color:var(--text-primary);font-weight:600;}
+.btn:hover{background:var(--bg-elevated);}
+.btn-primary{background:var(--accent);border-color:var(--accent);color:#fff;}
+.btn-primary:hover{background:var(--accent-dark);}
+.btn-danger{background:#fff;border-color:var(--red);color:var(--red);}
+.btn-danger:hover{background:var(--red-bg);}
+.btn-green{background:#fff;border-color:var(--green);color:var(--green);}
+.btn-green:hover{background:var(--green-bg);}
+.btn-amber{background:#fff;border-color:var(--amber);color:var(--amber);}
+.btn-amber:hover{background:var(--amber-bg);}
+.btn-sm{padding:4px 10px;font-size:11.5px;border-radius:6px;}
+.btn:disabled{opacity:.5;cursor:not-allowed;}
+.btn-block{width:100%;text-align:center;}
+
+table.data-table{width:100%;border-collapse:collapse;font-size:12.8px;}
+.data-table th{text-align:left;font-size:11px;color:var(--text-secondary);border-bottom:1px solid var(--border);padding:8px 10px;font-weight:700;white-space:nowrap;}
+.data-table td{border-bottom:1px solid var(--border);padding:9px 10px;vertical-align:middle;}
+.data-table tr:last-child td{border-bottom:none;}
+.data-table tr:hover td{background:var(--bg-elevated);}
+
+.progress-track{background:var(--bg-elevated);border-radius:6px;height:6px;overflow:hidden;position:relative;}
+.progress-fill{height:100%;border-radius:6px;}
+
+.chip-row{display:flex;flex-wrap:wrap;gap:6px;}
+.chip{background:var(--bg-elevated);border:1px solid var(--border);border-radius:14px;padding:3px 10px 3px 12px;font-size:11.5px;display:inline-flex;align-items:center;gap:6px;}
+.chip.chip-red{background:var(--red-bg);color:var(--red);border-color:#ffc9c9;}
+.chip.chip-amber{background:var(--amber-bg);color:var(--amber);border-color:#ffe08a;}
+.chip.chip-blue{background:var(--blue-bg);color:var(--accent);border-color:#a5d8ff;}
+.chip .chip-x{cursor:pointer;font-weight:700;opacity:.6;}
+.chip .chip-x:hover{opacity:1;}
+.chip-add{border:1px dashed var(--border);background:#fff;color:var(--text-secondary);border-radius:14px;padding:3px 12px;font-size:11.5px;cursor:pointer;}
+.chip-add:hover{border-color:var(--accent);color:var(--accent);}
+
+/* Kanban */
+.kanban{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;}
+.kanban-4{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;}
+.kanban-col{background:var(--bg-elevated);border-radius:10px;padding:12px;min-height:180px;transition:.1s;}
+.kanban-col.drag-over{outline:2px dashed var(--accent);outline-offset:-2px;background:var(--blue-bg);}
+.kanban-col-title{font-size:12.5px;font-weight:800;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;}
+.alert-card{background:#fff;border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:10px;cursor:pointer;transition:.1s;}
+.alert-card:hover{border-color:var(--accent);box-shadow:0 2px 8px rgba(0,0,0,.06);transform:translateY(-2px);}
+.alert-card.level-p0{border-left:3px solid var(--red);}
+.alert-card .a-title{font-size:12.8px;font-weight:700;margin:6px 0 8px;line-height:1.4;}
+.alert-card .a-meta{display:flex;flex-wrap:wrap;gap:6px;font-size:11px;color:var(--text-secondary);align-items:center;}
+.countdown{font-weight:700;}
+.countdown.blink{color:var(--red);animation:blink-red 1s infinite;}
+@keyframes blink-red{0%,100%{opacity:1;}50%{opacity:.3;}}
+
+/* 抽屉 */
+.drawer-overlay{position:fixed;inset:0;background:rgba(17,17,17,.4);z-index:200;display:flex;justify-content:flex-end;}
+.drawer-overlay.hidden{display:none;}
+.drawer{width:500px;max-width:94vw;background:#fff;height:100%;overflow-y:auto;padding:22px;box-shadow:-6px 0 24px rgba(0,0,0,.14);}
+.drawer-head{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px;}
+.drawer-close{background:var(--bg-elevated);border:none;border-radius:6px;width:28px;height:28px;cursor:pointer;font-size:14px;}
+.timeline{border-left:2px solid var(--border);padding-left:16px;margin-left:6px;}
+.timeline-item{position:relative;padding-bottom:16px;}
+.timeline-item::before{content:"";position:absolute;left:-21px;top:3px;width:9px;height:9px;border-radius:50%;background:var(--accent);}
+.timeline-item .t-time{font-size:11px;color:var(--text-secondary);font-weight:600;}
+.timeline-item .t-text{font-size:12.8px;margin-top:2px;}
+
+/* 弹窗 */
+.modal-overlay{position:fixed;inset:0;background:rgba(17,17,17,.5);z-index:300;display:flex;align-items:center;justify-content:center;padding:20px;}
+.modal-overlay.hidden{display:none;}
+.modal-box{background:#fff;border-radius:14px;padding:28px;width:480px;max-width:100%;}
+.modal-steps{display:flex;gap:6px;margin-bottom:18px;}
+.modal-steps span{flex:1;height:4px;border-radius:2px;background:var(--bg-elevated);}
+.modal-steps span.done{background:var(--accent);}
+.modal-foot{display:flex;justify-content:space-between;align-items:center;margin-top:22px;}
+
+/* Toast：右上角堆叠 */
+.toast-container{position:fixed;top:54px;right:20px;z-index:400;display:flex;flex-direction:column;gap:8px;align-items:flex-end;}
+.toast{background:#212529;color:#fff;padding:10px 16px;border-radius:8px;font-size:12.8px;box-shadow:0 4px 14px rgba(0,0,0,.24);animation:toast-in .18s ease;max-width:320px;}
+.toast.toast-green{background:var(--green);}
+.toast.toast-red{background:var(--red);}
+@keyframes toast-in{from{opacity:0;transform:translateY(-8px);}to{opacity:1;transform:translateY(0);}}
+
+/* 全局搜索 */
+.search-modal-box{background:#fff;border-radius:12px;width:560px;max-width:100%;overflow:hidden;}
+.search-input-row{display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid var(--border);}
+.search-input-row input{flex:1;border:none;outline:none;font-size:15px;font-family:inherit;}
+.search-results{max-height:360px;overflow-y:auto;padding:8px;}
+.search-result-item{padding:9px 10px;border-radius:8px;cursor:pointer;font-size:12.8px;}
+.search-result-item:hover{background:var(--bg-elevated);}
+.search-result-item .sr-meta{font-size:11px;color:var(--text-secondary);margin-top:2px;}
+mark{background:#fff3bf;padding:0 2px;border-radius:2px;}
+
+/* 质检卡片 */
+.review-card{background:#fff;border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:10px;display:flex;gap:12px;align-items:flex-start;}
+.review-card.active-focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(28,126,214,.14);}
+.review-card.chuanwei{border-color:#ffd8a8;background:#fffaf0;}
+.review-card.status-approved{opacity:.55;}
+.review-card.status-rejected{opacity:.4;}
+.review-card .rc-body{flex:1;min-width:0;}
+.review-card .rc-text{font-size:13px;margin:6px 0 8px;line-height:1.55;}
+.review-card .rc-tags{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;align-items:center;}
+.review-card .rc-conf{display:flex;align-items:center;gap:8px;margin-bottom:9px;}
+.review-card .rc-conf .progress-track{flex:1;}
+.review-card .rc-actions{display:flex;flex-wrap:wrap;gap:6px;}
+.review-card input[type=checkbox]{width:16px;height:16px;margin-top:3px;flex-shrink:0;}
+
+/* 雷达/趋势 svg */
+.chart-wrap{display:flex;justify-content:center;padding:6px 0;}
+
+/* 词云 */
+.wordcloud{display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:6px 0;}
+.wordcloud span{background:var(--blue-bg);color:var(--accent);border-radius:8px;padding:5px 13px;font-weight:700;display:inline-block;}
+
+/* 开关 */
+.switch{position:relative;width:36px;height:20px;display:inline-block;flex-shrink:0;}
+.switch input{opacity:0;width:0;height:0;position:absolute;}
+.slider-track{position:absolute;inset:0;background:#ced4da;border-radius:20px;cursor:pointer;transition:.15s;}
+.slider-track::before{content:"";position:absolute;width:16px;height:16px;left:2px;top:2px;background:#fff;border-radius:50%;transition:.15s;box-shadow:0 1px 2px rgba(0,0,0,.2);}
+.switch input:checked + .slider-track{background:var(--accent);}
+.switch input:checked + .slider-track::before{transform:translateX(16px);}
+
+/* 引导条 */
+.flow-steps{display:flex;align-items:center;gap:0;margin:16px 0;}
+.flow-step{flex:1;text-align:center;}
+.flow-step .fs-dot{width:30px;height:30px;border-radius:50%;background:var(--blue-bg);color:var(--accent);display:flex;align-items:center;justify-content:center;font-weight:800;margin:0 auto 6px;}
+.flow-step .fs-label{font-size:11.5px;font-weight:700;}
+.flow-arrow{color:var(--border);font-size:16px;padding-bottom:20px;}
+
+/* SOV 条 */
+.sov-row{display:flex;align-items:center;gap:12px;margin-bottom:12px;}
+.sov-row .sov-label{width:110px;font-size:12.5px;font-weight:700;flex-shrink:0;}
+.sov-row .sov-bar-bg{flex:1;background:var(--bg-elevated);border-radius:6px;height:22px;overflow:hidden;}
+.sov-row .sov-bar-fill{height:100%;border-radius:6px;display:flex;align-items:center;justify-content:flex-end;padding-right:8px;color:#fff;font-size:11.5px;font-weight:700;}
+.sov-row .sov-num{width:52px;text-align:right;font-weight:800;font-size:13px;flex-shrink:0;}
+
+.qa-bubble{background:var(--bg-elevated);border-radius:10px;padding:12px 14px;margin-bottom:10px;}
+.qa-bubble.qa-question{background:var(--blue-bg);}
+.qa-bubble .qa-role{font-size:11px;font-weight:800;color:var(--text-secondary);margin-bottom:4px;}
+.cite-chip{background:#fff;border:1px solid var(--border);border-radius:6px;padding:1px 7px;font-size:10.5px;color:var(--accent);cursor:pointer;margin-right:4px;}
+.cite-chip:hover{border-color:var(--accent);}
+
+.dual-timeline{border-left:2px solid var(--border);padding-left:16px;margin-left:8px;}
+.dual-timeline .dt-item{padding-bottom:14px;position:relative;}
+.dual-timeline .dt-item::before{content:"";position:absolute;left:-21px;top:3px;width:9px;height:9px;border-radius:50%;}
+.dual-timeline .dt-item.brand-youdoo::before{background:var(--accent);}
+.dual-timeline .dt-item.brand-kinhank::before{background:#862e9c;}
+.dual-timeline .dt-date{font-size:11px;font-weight:700;color:var(--text-secondary);}
+
+.section-gap{margin-bottom:18px;}
+.hint-bar{background:var(--blue-bg);border:1px solid #a5d8ff;border-radius:8px;padding:9px 12px;font-size:12px;color:var(--accent-dark);margin-bottom:14px;}
+.filter-bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:14px;}
+.filter-bar select{border:1px solid var(--border);border-radius:7px;padding:6px 10px;font-size:12.5px;font-family:inherit;background:#fff;color:var(--text-primary);}
+.batch-bar{display:flex;align-items:center;gap:10px;background:var(--bg-elevated);border-radius:8px;padding:9px 12px;margin-bottom:12px;}
+.batch-bar label{font-size:12.5px;display:flex;align-items:center;gap:6px;}
+
+.tab-pills{display:flex;gap:6px;}
+.tab-pill{border:1px solid var(--border);background:#fff;border-radius:20px;padding:5px 14px;font-size:12px;cursor:pointer;font-weight:600;color:var(--text-secondary);}
+.tab-pill.active{background:var(--accent);border-color:var(--accent);color:#fff;}
+
+.report-preview p{font-size:13px;line-height:1.9;margin-bottom:10px;}
+.cite-badge{background:var(--gray-bg);border-radius:5px;padding:1px 7px;font-size:10.5px;color:var(--text-secondary);cursor:pointer;white-space:nowrap;}
+.cite-badge:hover{background:var(--blue-bg);color:var(--accent);}
+
+.empty-hint{color:var(--text-secondary);font-size:12.5px;text-align:center;padding:20px 0;}
+
+/* 处置责任人 chip */
+.assignee-chip{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--text-secondary);}
+.assignee-chip .avatar-dot{width:18px;height:18px;border-radius:50%;color:#fff;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;flex-shrink:0;}
+
+/* 总览：待办 & 动态时间线 */
+.todo-item{display:flex;align-items:center;gap:8px;padding:8px 2px;border-bottom:1px solid var(--border);font-size:12.8px;cursor:pointer;}
+.todo-item:last-child{border-bottom:none;}
+.todo-item:hover{color:var(--accent);}
+.timeline-mini{display:flex;flex-direction:column;}
+.activity-item{display:flex;gap:10px;font-size:12.5px;padding:7px 0;border-bottom:1px dashed var(--border);}
+.activity-item:last-child{border-bottom:none;}
+.activity-dot{width:7px;height:7px;border-radius:50%;background:var(--accent);margin-top:5px;flex-shrink:0;}
+.activity-time{color:var(--text-secondary);font-size:11px;white-space:nowrap;}
+
+/* 知识库 */
+.kb-layout{display:grid;grid-template-columns:220px 1fr;gap:16px;align-items:start;}
+.kb-tree{background:#fff;border:1px solid var(--border);border-radius:10px;padding:10px;}
+.kb-tree-group{margin-bottom:2px;}
+.kb-tree-item{display:flex;justify-content:space-between;align-items:center;padding:7px 10px;border-radius:7px;cursor:pointer;font-size:12.8px;color:var(--text-secondary);gap:8px;}
+.kb-tree-item:hover{background:var(--bg-elevated);}
+.kb-tree-item.active{background:var(--blue-bg);color:var(--accent);font-weight:700;}
+.kb-tree-sub{padding-left:14px;}
+.kb-tree-sub .kb-tree-item{font-size:11.8px;padding:5px 10px;}
+.kb-card{background:#fff;border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:10px;cursor:pointer;}
+.kb-card:hover{border-color:var(--accent);box-shadow:0 2px 8px rgba(0,0,0,.06);transform:translateY(-2px);}
+.kb-card-head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap;}
+.kb-card-title{font-size:13px;font-weight:700;}
+.kb-card-meta{font-size:11px;color:var(--text-secondary);display:flex;gap:12px;margin-top:6px;}
+.kb-full-text{font-size:12.8px;line-height:1.8;margin-top:8px;padding-top:8px;border-top:1px solid var(--border);}
+
+/* 调度日历 */
+.cal-head{display:flex;align-items:center;gap:10px;margin-bottom:14px;}
+.cal-head b{font-size:15px;}
+.cal-layout{display:grid;grid-template-columns:1fr 320px;gap:16px;align-items:start;}
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;}
+.cal-dow{text-align:center;font-size:11px;color:var(--text-secondary);font-weight:700;padding:4px 0;}
+.cal-cell{background:#fff;border:1px solid var(--border);border-radius:8px;min-height:76px;padding:6px;cursor:pointer;position:relative;}
+.cal-cell.other-month{opacity:.32;cursor:default;}
+.cal-cell:hover{border-color:var(--accent);}
+.cal-cell.selected{border-color:var(--accent);box-shadow:0 0 0 2px rgba(28,126,214,.18);}
+.cal-cell.today .cal-date-num{background:var(--accent);color:#fff;border-radius:50%;}
+.cal-date-num{font-size:11.5px;font-weight:700;width:20px;height:20px;display:flex;align-items:center;justify-content:center;}
+.cal-dots{display:flex;flex-wrap:wrap;gap:3px;margin-top:5px;}
+.cal-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0;}
+.cal-legend{display:flex;gap:14px;flex-wrap:wrap;margin-top:14px;font-size:11.5px;color:var(--text-secondary);align-items:center;}
+.cal-legend span{display:inline-flex;align-items:center;gap:5px;}
+.task-card{background:#fff;border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:8px;transition:.1s;}
+.task-card:hover{border-color:var(--accent);box-shadow:0 2px 8px rgba(0,0,0,.06);transform:translateY(-2px);}
+.task-card-head{display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:6px;}
+
+@media (max-width:960px){
+  .hamburger{display:inline-block;}
+  .sidebar{position:fixed;left:-224px;top:42px;bottom:0;transition:left .18s ease;z-index:100;box-shadow:2px 0 12px rgba(0,0,0,.1);}
+  .sidebar.open{left:0;}
+  .stat-grid{grid-template-columns:repeat(2,1fr);}
+  .grid-2{grid-template-columns:1fr;}
+  .grid-3{grid-template-columns:1fr;}
+  .kanban{grid-template-columns:1fr;}
+  .kanban-4{grid-template-columns:1fr;}
+  .kb-layout{grid-template-columns:1fr;}
+  .cal-layout{grid-template-columns:1fr;}
+  .content-header{flex-direction:column;align-items:flex-start;position:static;}
+  .health-strip{margin-left:0;}
+  .drawer{width:100%;}
+}
+</style>
+</head>
+<body>
+
+<!-- ============ 顶部 Tab 导航 ============ -->
+<header class="top-tabs">
+  <button class="hamburger" id="hamburgerBtn" onclick="toggleSidebar()">☰</button>
+  <div class="brand">Cyber-Intelligence · 舆情运营调度中心</div>
+  <nav class="tab-list" id="topTabList"></nav>
+  <div class="top-right">
+    <span class="user-chip"><span class="avatar-dot">张</span>张舆情 · 舆情监控岗</span>
+    <span id="clock">--:--:--</span>
+    <button class="icon-btn-dark" onclick="openOnboarding(true)">使用引导</button>
+  </div>
+</header>
+
+<div class="app-body">
+  <!-- ============ 左侧导航 ============ -->
+  <aside class="sidebar" id="sidebar"></aside>
+
+  <!-- ============ 主内容区 ============ -->
+  <main class="content">
+    <div class="content-header">
+      <div>
+        <h1 id="viewTitle">总览 Dashboard</h1>
+        <div class="header-sub" id="viewSubtitle">全平台舆情概况 · 实时更新</div>
+      </div>
+      <div class="search-box" onclick="openSearch()">🔍 搜索内容 / 预警 / 知识库 / 日程 <span class="kbd">⌘K</span></div>
+      <div class="health-strip" id="healthStrip"></div>
+    </div>
+
+    <!-- ---------- 1. 总览 ---------- -->
+    <section class="view active" id="view-overview">
+      <div class="card section-gap" id="topRiskCard"></div>
+      <div class="stat-grid" id="overviewStats"></div>
+      <div class="grid-2">
+        <div>
+          <div class="card section-gap">
+            <div class="panel-title">今日待办 <small>点击直达处理</small></div>
+            <div id="todoList"></div>
+          </div>
+          <div class="card section-gap">
+            <div class="panel-title">平台采集健康状态 <small>7 平台 · 点击可跳转采集接入</small></div>
+            <div class="grid-3" id="platformHealthGrid" style="grid-template-columns:repeat(4,1fr);"></div>
+          </div>
+          <div class="card section-gap">
+            <div class="panel-title">动态时间线 <small>近期系统与人工操作记录</small></div>
+            <div class="timeline-mini" id="activityTimeline"></div>
+          </div>
+          <div class="card">
+            <div class="panel-title">品牌健康指数 BHI 趋势 <small>近 7 天</small></div>
+            <div class="chart-wrap" id="bhiChart"></div>
+          </div>
+        </div>
+        <div>
+          <div class="card section-gap">
+            <div class="panel-title">快捷操作</div>
+            <div style="display:flex;flex-direction:column;gap:8px;">
+              <button class="btn btn-primary btn-block" id="quickCollectBtn" onclick="quickCollect()">⇩ 立即采集全平台</button>
+              <button class="btn btn-block" onclick="switchView('review')">☑ 查看复核队列（<span id="quickReviewCount">0</span>）</button>
+              <button class="btn btn-block" id="quickReportBtn" onclick="quickGenerateReport()">▤ 生成本周周报</button>
+              <button class="btn btn-block" onclick="switchView('reports');focusAIQA();">💬 AI 舆情问答</button>
+              <button class="btn btn-block" onclick="switchView('calendar')">▦ 查看调度日历</button>
+              <button class="btn btn-block" onclick="switchView('knowledge')">▧ 查看舆情知识库</button>
+            </div>
+          </div>
+          <div class="card section-gap">
+            <div class="panel-title">近期预警 <small>按风险等级排序</small></div>
+            <div id="recentAlertsList"></div>
+          </div>
+          <div class="card">
+            <div class="panel-title">今日提醒</div>
+            <ul style="display:flex;flex-direction:column;gap:10px;font-size:12.5px;color:var(--text-secondary);">
+              <li>· 微博采集量较昨日骤降 42%，疑似接口限流，建议人工核查登录态</li>
+              <li>· 本周周报草稿已生成 82%，预计明日 09:00 自动定稿</li>
+              <li>· 复核队列积压 <b id="quickReviewCount2" style="color:var(--text-primary)">0</b> 条，建议优先处理串味样本</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- 2. 采集接入 ---------- -->
+    <section class="view" id="view-collect">
+      <div class="hint-bar">健康三态说明：<span class="badge badge-green">● 正常</span> 采集正常波动内　<span class="badge badge-amber">● 疑似异常</span> 量级骤降/骤增需核查　<span class="badge badge-red">● 失败</span> 采集中断需立即处理　·　完整调度计划见 <a href="javascript:switchView('calendar')" style="color:var(--accent);">调度日历</a></div>
+      <div class="card section-gap">
+        <div class="panel-title">平台采集任务 <small>7 平台 · 免登录/浏览器桥混合采集</small></div>
+        <div style="overflow-x:auto;">
+          <table class="data-table">
+            <thead><tr><th>平台</th><th>任务状态</th><th>上次运行</th><th>本期采集量</th><th>健康状态</th><th>操作</th></tr></thead>
+            <tbody id="collectTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="card">
+        <div class="panel-title">
+          监控关键词配置（watch.yaml）
+          <button class="btn btn-sm" onclick="toggleKeywordPanel()" id="kwToggleBtn">展开配置</button>
+        </div>
+        <div id="keywordConfigPanel" style="display:none;"></div>
+      </div>
+    </section>
+
+    <!-- ---------- 3. 数据质检工作台 ---------- -->
+    <section class="view" id="view-review">
+      <div class="hint-bar">快捷键（先点击卡片选中）：<span class="kbd">1</span>标正面　<span class="kbd">2</span>标中性　<span class="kbd">3</span>标负面　<span class="kbd">i</span>标反讽　<span class="kbd">s</span>标水军　<span class="kbd">r</span>标串味　<span class="kbd">Enter</span>快速通过　<span class="kbd">Esc</span>取消选中</div>
+
+      <div class="card section-gap" id="chuanweiPanel"></div>
+
+      <div class="card section-gap">
+        <div class="panel-title">知识库速查 <small>输入关键词快速查找应对口径 / 历史案例</small></div>
+        <input id="reviewKBSearch" type="text" placeholder="例如：发热、退款、串味…" oninput="handleReviewKBSearch()" style="width:100%;border:1px solid var(--border);border-radius:7px;padding:8px 10px;font-size:12.5px;font-family:inherit;margin-bottom:8px;">
+        <div id="reviewKBResults"></div>
+      </div>
+
+      <div class="filter-bar">
+        <select id="filterStatus" onchange="applyReviewFilters()">
+          <option value="all">全部复核状态</option>
+          <option value="pending">待复核</option>
+          <option value="approved">已通过</option>
+          <option value="rejected">已拒绝</option>
+        </select>
+        <select id="filterPlatform" onchange="applyReviewFilters()">
+          <option value="all">全部平台</option>
+        </select>
+        <select id="filterConf" onchange="applyReviewFilters()">
+          <option value="all">全部置信度</option>
+          <option value="low">低 &lt; 0.5</option>
+          <option value="mid">中 0.5 ~ 0.8</option>
+          <option value="high">高 &gt; 0.8</option>
+        </select>
+        <span class="muted" style="font-size:12px;" id="filterResultCount"></span>
+      </div>
+
+      <div class="batch-bar">
+        <label><input type="checkbox" id="selectAllBox" onchange="toggleSelectAll(this.checked)"> 全选当前列表</label>
+        <span class="muted" style="font-size:12px;">已选 <b id="selectedCount">0</b> 条</span>
+        <button class="btn btn-green btn-sm" onclick="batchApprove()">✓ 批量通过</button>
+        <button class="btn btn-danger btn-sm" onclick="batchReject()">✕ 批量拒绝</button>
+      </div>
+
+      <div id="reviewCardList"></div>
+    </section>
+
+    <!-- ---------- 4. 情绪分析 ---------- -->
+    <section class="view" id="view-analysis">
+      <div class="view-title-row">
+        <div class="tab-pills" id="analysisPeriodPills"></div>
+      </div>
+      <div class="grid-2">
+        <div class="card section-gap">
+          <div class="panel-title">ABSA 六维口碑雷达图 <small>硬件 / 系统 / 游戏兼容 / 售后 / 价格 / 物流</small></div>
+          <div class="chart-wrap" id="radarChart"></div>
+        </div>
+        <div class="card section-gap">
+          <div class="panel-title">主要诉求 Top5</div>
+          <div class="wordcloud" id="wordcloud"></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="panel-title">六维明细</div>
+        <div style="overflow-x:auto;">
+          <table class="data-table">
+            <thead><tr><th>维度</th><th>正面数</th><th>负面数</th><th>净情绪分</th><th>代表性原文</th></tr></thead>
+            <tbody id="absaTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- 5. 预警中心 ---------- -->
+    <section class="view" id="view-alerts">
+      <div class="hint-bar">拖拽卡片或点击卡片进入详情可流转处置状态：待处置 → 处理中 → 待确认（口径待批） → 已归档</div>
+      <div class="kanban-4" id="alertsKanban"></div>
+
+      <div class="card section-gap" style="margin-top:16px;">
+        <div class="panel-title">冷却队列 <small>已处理事件，历史可查</small></div>
+        <div id="cooldownList"></div>
+      </div>
+
+      <div class="card" id="falsePositivePanel">
+        <div class="panel-title">串味词库联动 <small>误报标记后自动归集进入舆情知识库 · 串味词库</small></div>
+        <div id="falsePositiveList"><div class="empty-hint">暂无误报标记记录</div></div>
+      </div>
+    </section>
+
+    <!-- ---------- 6. 报告中心 ---------- -->
+    <section class="view" id="view-reports">
+      <div class="view-title-row">
+        <div class="tab-pills" id="reportsTabPills"></div>
+      </div>
+
+      <div id="reportsTabWeekly">
+        <div class="grid-2">
+          <div>
+            <div class="card section-gap">
+              <div class="panel-title">周报历史 <small>点击切换预览</small></div>
+              <div id="reportHistoryList"></div>
+            </div>
+            <div class="card section-gap">
+              <div class="panel-title" id="reportPreviewTitle">可溯源周报预览</div>
+              <div class="report-preview" id="reportPreviewBody"></div>
+            </div>
+            <div class="card">
+              <div class="panel-title">诉求 Backlog</div>
+              <div style="overflow-x:auto;">
+                <table class="data-table">
+                  <thead><tr><th>诉求</th><th>平台</th><th>数量</th><th>情绪</th><th>产品 Roadmap</th></tr></thead>
+                  <tbody id="backlogTableBody"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+          <div>
+            <div class="card">
+              <div class="panel-title">审核流程说明</div>
+              <div class="flow-steps">
+                <div class="flow-step"><div class="fs-dot">1</div><div class="fs-label">口径草稿</div></div>
+                <div class="flow-arrow">→</div>
+                <div class="flow-step"><div class="fs-dot">2</div><div class="fs-label">总监审核</div></div>
+                <div class="flow-arrow">→</div>
+                <div class="flow-step"><div class="fs-dot">3</div><div class="fs-label">确认发布</div></div>
+                <div class="flow-arrow">→</div>
+                <div class="flow-step"><div class="fs-dot">4</div><div class="fs-label">飞书推送</div></div>
+              </div>
+              <div class="muted" style="font-size:12px;">周报由张舆情生成草稿，提交李总监审核确认后自动推送飞书群，如审核不通过将打回草稿重新编辑。</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="reportsTabDaily" style="display:none;">
+        <div class="card">
+          <div class="panel-title">老板一句话日报</div>
+          <button class="btn btn-primary btn-block" style="margin-bottom:10px;" onclick="triggerBossDaily()">✎ 手动触发今日日报</button>
+          <div id="bossDailyList"></div>
+        </div>
+      </div>
+
+      <div id="reportsTabQA" style="display:none;">
+        <div class="card">
+          <div class="panel-title">AI 舆情问答</div>
+          <div id="qaHistory" style="max-height:420px;overflow-y:auto;margin-bottom:10px;"></div>
+          <div style="display:flex;gap:8px;">
+            <input id="qaInput" type="text" placeholder="例如：发热问题在哪些平台反馈最多？" style="flex:1;border:1px solid var(--border);border-radius:7px;padding:8px 10px;font-size:12.8px;font-family:inherit;" onkeydown="if(event.key==='Enter')sendAIQuestion()">
+            <button class="btn btn-primary" onclick="sendAIQuestion()">发送</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- 7. 竞品监控 ---------- -->
+    <section class="view" id="view-competitor">
+      <div class="card section-gap">
+        <div class="panel-title">SOV 声量占比 <small>Youdoo Box vs KINHANK · 近 30 天</small></div>
+        <div id="sovChart"></div>
+      </div>
+      <div class="grid-2">
+        <div class="card section-gap">
+          <div class="panel-title">竞品情绪对比（六维）</div>
+          <div style="overflow-x:auto;">
+            <table class="data-table">
+              <thead><tr><th>维度</th><th>Youdoo 正/负</th><th>KINHANK 正/负</th></tr></thead>
+              <tbody id="competitorTableBody"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="card section-gap">
+          <div class="panel-title">KINHANK 最新动态</div>
+          <div id="kinhankFeed"></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="panel-title">双品牌事件时间线</div>
+        <div class="dual-timeline" id="dualTimeline"></div>
+      </div>
+    </section>
+
+    <!-- ---------- 8. 系统配置 ---------- -->
+    <section class="view" id="view-config">
+      <div class="grid-2">
+        <div>
+          <div class="card section-gap">
+            <div class="panel-title">关键词管理（watch.yaml）</div>
+            <div id="entityConfigList"></div>
+          </div>
+          <div class="card section-gap">
+            <div class="panel-title">平台开关与调度</div>
+            <div style="overflow-x:auto;">
+              <table class="data-table">
+                <thead><tr><th>平台</th><th>启用</th><th>调度频率</th></tr></thead>
+                <tbody id="platformScheduleBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+        <div>
+          <div class="card section-gap">
+            <div class="panel-title">LLM 配置</div>
+            <div id="llmConfigPanel"></div>
+          </div>
+          <div class="card section-gap">
+            <div class="panel-title">成本配额仪表盘</div>
+            <div id="budgetPanel"></div>
+          </div>
+          <div class="card">
+            <div class="panel-title">飞书 Webhook 配置</div>
+            <div id="feishuPanel"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- 9. 舆情知识库（NEW） ---------- -->
+    <section class="view" id="view-knowledge">
+      <div class="kb-layout">
+        <div class="kb-tree" id="kbTree"></div>
+        <div>
+          <div class="filter-bar">
+            <div class="search-box" style="min-width:260px;" onclick="document.getElementById('kbSearchInput').focus()">
+              🔍 <input id="kbSearchInput" type="text" placeholder="搜索知识库内容…" oninput="handleKBSearch()">
+            </div>
+            <button class="btn btn-primary btn-sm" onclick="distillKnowledge()">✨ 知识沉淀（从预警处置记录提炼）</button>
+            <span class="muted" style="font-size:12px;" id="kbResultCount"></span>
+          </div>
+          <div id="kbCardList"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- 10. 调度日历（NEW） ---------- -->
+    <section class="view" id="view-calendar">
+      <div class="cal-head">
+        <button class="btn btn-sm" onclick="calNavMonth(-1)">←</button>
+        <b id="calMonthLabel"></b>
+        <button class="btn btn-sm" onclick="calNavMonth(1)">→</button>
+        <button class="btn btn-sm" onclick="calGoToday()">今天</button>
+      </div>
+      <div class="cal-layout">
+        <div>
+          <div class="cal-grid" id="calDowRow"></div>
+          <div class="cal-grid" id="calGrid" style="margin-top:6px;"></div>
+          <div class="cal-legend">
+            <span><span class="cal-dot" style="background:var(--accent);"></span>采集计划</span>
+            <span><span class="cal-dot" style="background:var(--amber);"></span>报告排期</span>
+            <span><span class="cal-dot" style="background:var(--red);"></span>预警跟进</span>
+            <span><span class="cal-dot" style="background:var(--green);"></span>已完成</span>
+          </div>
+        </div>
+        <div class="card" id="calTaskPanel"></div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- ============ 抽屉 ============ -->
+<div class="drawer-overlay hidden" id="drawerOverlay" onclick="if(event.target===this)closeDrawer()">
+  <div class="drawer">
+    <div class="drawer-head">
+      <h3 id="drawerTitle" style="font-size:15px;font-weight:800;"></h3>
+      <button class="drawer-close" onclick="closeDrawer()">✕</button>
+    </div>
+    <div id="drawerBody"></div>
+  </div>
+</div>
+
+<!-- ============ 全局搜索 ⌘K ============ -->
+<div class="modal-overlay hidden" id="searchOverlay" onclick="if(event.target===this)closeSearch()">
+  <div class="search-modal-box">
+    <div class="search-input-row">
+      <span>🔍</span>
+      <input id="searchInput" type="text" placeholder="搜索当前系统内容…（至少 2 个字，回车定位第一条）" oninput="handleSearchInput()" onkeydown="if(event.key==='Enter')confirmSearch()">
+      <span class="kbd">Esc</span>
+    </div>
+    <div class="search-results" id="searchResults"></div>
+  </div>
+</div>
+
+<!-- ============ 新手引导 ============ -->
+<div class="modal-overlay hidden" id="onboardingOverlay">
+  <div class="modal-box">
+    <div class="modal-steps" id="onboardingSteps"></div>
+    <div id="onboardingContent"></div>
+    <div class="modal-foot">
+      <button class="btn" onclick="closeOnboarding()">跳过引导</button>
+      <div style="display:flex;gap:8px;">
+        <button class="btn" id="obPrevBtn" onclick="onboardingPrev()">上一步</button>
+        <button class="btn btn-primary" id="obNextBtn" onclick="onboardingNext()">下一步</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast-container" id="toastContainer"></div>
+
+<script>
+'use strict';
+
+/* ===================== 用户 & 导航 ===================== */
+var USERS = [
+  {id:'u1', name:'张舆情', role:'舆情监控岗', avatar:'张', color:'#1c7ed6'},
+  {id:'u2', name:'李总监', role:'运营总监', avatar:'李', color:'#e67700'},
+  {id:'u3', name:'王产品', role:'产品总监', avatar:'王', color:'#2b8a3e'}
+];
+function userById(id){
+  for(var i=0;i<USERS.length;i++){ if(USERS[i].id===id) return USERS[i]; }
+  return null;
+}
+function userChip(id){
+  var u = userById(id);
+  if(!u) return '<span class="assignee-chip muted">未分配</span>';
+  return '<span class="assignee-chip"><span class="avatar-dot" style="background:'+u.color+';">'+u.avatar+'</span>'+u.name+'</span>';
+}
+
+var VIEWS = [
+  {id:'overview', group:'工作台', icon:'◆', label:'总览工作台'},
+  {id:'collect', group:'工作台', icon:'⇩', label:'采集接入'},
+  {id:'review', group:'工作台', icon:'☑', label:'数据质检工作台', badgeFn:'pendingReviewCount'},
+  {id:'analysis', group:'分析洞察', icon:'◔', label:'情绪分析'},
+  {id:'alerts', group:'分析洞察', icon:'▲', label:'预警中心'},
+  {id:'reports', group:'分析洞察', icon:'▤', label:'报告中心'},
+  {id:'competitor', group:'分析洞察', icon:'◫', label:'竞品监控'},
+  {id:'knowledge', group:'资产沉淀', icon:'▧', label:'舆情知识库'},
+  {id:'calendar', group:'资产沉淀', icon:'▦', label:'调度日历'},
+  {id:'config', group:'资产沉淀', icon:'⚙', label:'系统配置'}
+];
+
+var VIEW_META = {
+  overview:{title:'总览 Dashboard', sub:'全平台舆情概况 · 实时更新'},
+  collect:{title:'采集接入', sub:'7 平台任务调度与关键词配置'},
+  review:{title:'数据质检工作台', sub:'人工复核 · 串味词库联动'},
+  analysis:{title:'情绪分析', sub:'ABSA 六维口碑雷达'},
+  alerts:{title:'预警中心', sub:'P0 / P1 分级处置看板'},
+  reports:{title:'报告中心', sub:'周报 · 日报 · AI 问答'},
+  competitor:{title:'竞品监控', sub:'Youdoo Box vs KINHANK'},
+  knowledge:{title:'舆情知识库', sub:'应对口径 · 分析模板 · 历史案例'},
+  calendar:{title:'调度日历', sub:'采集计划 · 报告排期 · 预警跟进'},
+  config:{title:'系统配置', sub:'关键词 · 平台 · LLM · 飞书'}
+};
+
+/* ===================== 平台 & 采集 ===================== */
+var PLATFORM_NAMES = {weibo:'微博', douyin:'抖音', xhs:'小红书', bilibili:'B站', zhihu:'知乎', jd:'京东评价', tieba:'贴吧'};
+var PLATFORMS = [
+  {id:'weibo', name:'微博', status:'suspect', lastRun:'09:12', volume:186, cron:'每 30 分钟'},
+  {id:'douyin', name:'抖音', status:'ok', lastRun:'09:20', volume:342, cron:'每 30 分钟'},
+  {id:'xhs', name:'小红书', status:'ok', lastRun:'09:15', volume:271, cron:'每 1 小时'},
+  {id:'bilibili', name:'B站', status:'ok', lastRun:'09:00', volume:98, cron:'每 2 小时'},
+  {id:'zhihu', name:'知乎', status:'ok', lastRun:'08:40', volume:41, cron:'每 4 小时'},
+  {id:'jd', name:'京东评价', status:'ok', lastRun:'07:30', volume:63, cron:'每 6 小时'},
+  {id:'tieba', name:'贴吧', status:'fail', lastRun:'昨日 23:10', volume:0, cron:'每 1 小时'}
+];
+var COLLECT_TASKS = PLATFORMS.map(function(p){
+  return {id:p.id, name:p.name, status:p.status, lastRun:p.lastRun, volume:p.volume, cron:p.cron};
+});
+
+var ENTITIES = [
+  {id:'youdoo', name:'Youdoo Box', aliases:['优度盒子','Youdoo','优度掌机'], mustNot:['优度日化','有度科技'], crisisBoost:['自燃','爆炸','起火','猝死']},
+  {id:'kinhank', name:'KINHANK', aliases:['金汉克','KINHANK Super Console'], mustNot:['金汉克建材'], crisisBoost:['数据泄露','跑路']}
+];
+
+/* ===================== 数据质检队列（20 条） ===================== */
+var REVIEW_QUEUE = [
+  {id:'wb-20260709-041', platform:'weibo', author:'@数码阿凯', text:'Youdoo Box 玩了三小时手心烫得能煎蛋，官方说的散热优化在哪呢', polarity:'neg', type:'normal', confidence:0.91, status:'pending', time:'09:41'},
+  {id:'dy-20260709-032', platform:'douyin', author:'掌机小陈', text:'优度盒子这做工是真的可以，1000 出头能有这体验很惊喜了', polarity:'pos', type:'normal', confidence:0.88, status:'pending', time:'09:32'},
+  {id:'xhs-20260709-019', platform:'xhs', author:'糖糖爱游戏', text:'退货三次官方客服都不给回复，果然“优度日化”的售后态度也一个样', polarity:'neg', type:'chuanwei', confidence:0.62, status:'pending', time:'09:19'},
+  {id:'wb-20260709-038', platform:'weibo', author:'@匿名吃瓜', text:'呵呵，Youdoo 这“旗舰散热”，笑不活了[doge]', polarity:'neg', type:'irony', confidence:0.77, status:'pending', time:'09:38'},
+  {id:'dy-20260709-027', platform:'douyin', author:'掌机评测君', text:'优度盒子 优度盒子 优度盒子 真的很好 大家快来买 优度盒子', polarity:'pos', type:'shuijun', confidence:0.94, status:'pending', time:'09:27'},
+  {id:'bi-20260709-011', platform:'bilibili', author:'掌机拆解UP', text:'拆解发现这代散热鳍片密度提升了 30%，实测满载壳温 41.2℃，属于正常区间', polarity:'neu', type:'normal', confidence:0.85, status:'pending', time:'09:11'},
+  {id:'jd-20260709-008', platform:'jd', author:'京东用户1832', text:'物流很快，包装完好，游戏兼容性比想象中好，五星', polarity:'pos', type:'normal', confidence:0.9, status:'approved', time:'08:58'},
+  {id:'wb-20260709-035', platform:'weibo', author:'@维权小分队', text:'建议大家去看看优度日化最近的投诉记录，跟Youdoo没关系但是老是被搜混', polarity:'neu', type:'chuanwei', confidence:0.58, status:'pending', time:'09:35'},
+  {id:'zh-20260709-006', platform:'zhihu', author:'知乎-硬核评测', text:'从散热设计角度分析 Youdoo Box 与同价位竞品的差异，详见回答正文', polarity:'neu', type:'normal', confidence:0.81, status:'pending', time:'08:40'},
+  {id:'dy-20260709-021', platform:'douyin', author:'游戏搬砖工', text:'退款流程走了两周还没到账，客服说的“3-5工作日”是骗人的吗', polarity:'neg', type:'normal', confidence:0.86, status:'pending', time:'09:21'},
+  {id:'xhs-20260709-014', platform:'xhs', author:'小红薯8827', text:'哈哈哈买它就是为了发热吧，暖手宝内味了', polarity:'neg', type:'irony', confidence:0.73, status:'pending', time:'09:14'},
+  {id:'wb-20260709-029', platform:'weibo', author:'@机圈老张', text:'Youdoo Box 618 到手 999，性价比属实能打，兼容性没踩雷', polarity:'pos', type:'normal', confidence:0.87, status:'approved', time:'09:29'},
+  {id:'tb-20260709-004', platform:'tieba', author:'掌机吧-匿名', text:'求问有没有人也遇到开机黑屏的情况，重启三次才好', polarity:'neg', type:'normal', confidence:0.69, status:'pending', time:'08:20'},
+  {id:'dy-20260709-018', platform:'douyin', author:'低价好物推荐官', text:'优度盒子 冲冲冲 家人们 链接在购物车 优度盒子 真的绝了', polarity:'pos', type:'shuijun', confidence:0.92, status:'pending', time:'09:18'},
+  {id:'jd-20260709-003', platform:'jd', author:'京东用户0921', text:'价格比上次买的时候贵了100，感觉不太厚道', polarity:'neg', type:'normal', confidence:0.66, status:'pending', time:'07:50'},
+  {id:'wb-20260709-024', platform:'weibo', author:'@数码情报站', text:'【转发】Youdoo 官方致歉声明：针对发热问题将推送系统优化补丁', polarity:'neu', type:'normal', confidence:0.8, status:'pending', time:'09:24'},
+  {id:'xhs-20260709-009', platform:'xhs', author:'开箱不吃亏', text:'物流三天到，开箱完整，第一次用掌机不知道选哪个游戏兼容性列表更新一下就好了', polarity:'neu', type:'normal', confidence:0.71, status:'rejected', time:'08:05'},
+  {id:'bi-20260709-002', platform:'bilibili', author:'数码小透明', text:'呵呵 官方客服回复速度快到我怀疑是不是机器人在念稿子[微笑]', polarity:'neg', type:'irony', confidence:0.7, status:'pending', time:'07:35'},
+  {id:'dy-20260709-013', platform:'douyin', author:'掌机小陈', text:'追更：官方联系我补发了配件，处理速度可以的', polarity:'pos', type:'normal', confidence:0.83, status:'pending', time:'08:52'},
+  {id:'wb-20260709-045', platform:'weibo', author:'@匿名用户99', text:'刚才有人发的“猝死”截图看着挺吓人的，官方赶紧回应一下吧', polarity:'neg', type:'normal', confidence:0.6, status:'pending', time:'09:45'}
+];
+
+/* ===================== 情绪分析 ABSA ===================== */
+var ABSA_DIMS = ['硬件质量','系统体验','游戏兼容','售后服务','价格','物流'];
+var ABSA_DATA = {
+  week: [
+    {dim:'硬件质量', pos:214, neg:132, net:0.24, quote:'拆解发现这代散热鳍片密度提升了 30%，实测满载壳温 41.2℃'},
+    {dim:'系统体验', pos:188, neg:96, net:0.32, quote:'系统流畅度比上一代好很多，几乎没有卡顿'},
+    {dim:'游戏兼容', pos:241, neg:58, net:0.61, quote:'兼容性比想象中好，主流大作都能跑'},
+    {dim:'售后服务', pos:79, neg:203, net:-0.44, quote:'退款流程走了两周还没到账，客服态度也一般'},
+    {dim:'价格', pos:196, neg:87, net:0.38, quote:'性价比属实能打，999 的价格没踩雷'},
+    {dim:'物流', pos:132, neg:41, net:0.53, quote:'物流很快，包装完好'}
+  ],
+  month: [
+    {dim:'硬件质量', pos:820, neg:512, net:0.23, quote:'发热问题在 618 期间集中反馈，官方已推送优化补丁'},
+    {dim:'系统体验', pos:701, neg:389, net:0.29, quote:'系统更新后卡顿明显减少'},
+    {dim:'游戏兼容', pos:912, neg:203, net:0.64, quote:'主流模拟器兼容性持续提升'},
+    {dim:'售后服务', pos:301, neg:744, net:-0.42, quote:'售后响应慢是本月最集中的负面诉求'},
+    {dim:'价格', pos:688, neg:301, net:0.39, quote:'618 期间价格战导致部分用户觉得买贵了'},
+    {dim:'物流', pos:512, neg:150, net:0.55, quote:'大促期间物流时效仍保持稳定'}
+  ],
+  quarter: [
+    {dim:'硬件质量', pos:2410, neg:1602, net:0.20, quote:'季度内散热相关投诉环比下降 12%'},
+    {dim:'系统体验', pos:2103, neg:1150, net:0.29, quote:'系统体验净情绪分季度内持续上升'},
+    {dim:'游戏兼容', pos:2802, neg:640, net:0.63, quote:'游戏兼容维度全季度保持最高净情绪分'},
+    {dim:'售后服务', pos:980, neg:2231, net:-0.39, quote:'售后服务连续三个月为唯一负净情绪维度'},
+    {dim:'价格', pos:2011, neg:980, net:0.34, quote:'价格维度情绪波动与促销节奏高度相关'},
+    {dim:'物流', pos:1602, neg:490, net:0.53, quote:'物流维度全季度稳定在正净情绪区间'}
+  ]
+};
+var WORDCLOUD = [
+  {word:'发热', count:186}, {word:'退款慢', count:142}, {word:'性价比', count:121},
+  {word:'兼容性', count:98}, {word:'客服态度', count:76}
+];
+var BHI_TREND = [
+  {date:'07-03', score:71}, {date:'07-04', score:69}, {date:'07-05', score:73},
+  {date:'07-06', score:68}, {date:'07-07', score:64}, {date:'07-08', score:60}, {date:'07-09', score:58}
+];
+
+/* ===================== 预警中心 ===================== */
+var RESPONSE_TEMPLATES = {
+  '发热投诉':'关于近期反馈的设备发热问题，我们已第一时间成立专项小组排查。经初步检测，属于高负载场景下的正常温控现象，但为进一步提升体验，将于本周内推送系统级散热优化补丁。对于已产生使用困扰的用户，我们提供免费上门检测与优先换新服务，客服将在 24 小时内主动联系。感谢大家的信任与监督。',
+  '价格争议':'针对近期价格波动引发的用户疑问，我们说明如下：本次调整为促销周期结束后的常规价格回调，所有正式售价均在官方渠道公示，不存在临时抬价行为。对于活动期间下单的用户，我们承诺价保 15 天，差价可申请补偿。',
+  '功能缺陷':'我们已确认相关功能异常问题，技术团队正在加急修复，预计将于近期版本更新中同步上线。给您带来的不便深表歉意，如影响正常使用，可联系客服获取过渡期解决方案。',
+  '虚假信息':'经核实，网传相关信息与事实不符，我们已保留相关证据并将通过官方渠道发布正式说明。同时呼吁广大用户理性判断，以官方公告为准，我们也将持续关注舆情动态。',
+  '默认':'我们已关注到相关反馈，正在核实具体情况，将尽快通过官方渠道给出正式回应，感谢您的耐心等待。'
+};
+
+var ALERTS = [
+  {
+    id:'AL-0091', level:'P0', title:'“Youdoo Box 疑似自燃”话题登上微博同城热搜，相关截图广泛传播',
+    platform:'weibo', triggerTime:'08:52', relatedCount:214, assigneeId:'u1', status:'pending',
+    category:'发热投诉', deadlineMin:45, responseDraft:null,
+    timeline:[
+      {time:'08:52', text:'系统监测到相关话题声量骤增，自动触发 P0 预警'},
+      {time:'08:55', text:'张舆情已认领，开始核实原始信源'},
+      {time:'09:03', text:'核实发现原图 EXIF 信息与设备型号不符，疑似张冠李戴'}
+    ],
+    sourcePosts:[
+      {platform:'微博', author:'@数码爆料前线', text:'刚收到网友投稿，某掌机疑似自燃冒烟，图片已经传疯了', time:'08:49'},
+      {platform:'微博', author:'@吃瓜不嫌事大', text:'转发上面这条，希望官方尽快回应！', time:'08:56'}
+    ]
+  },
+  {
+    id:'AL-0088', level:'P0', title:'第三方评测号发布《Youdoo Box 618 大促价格猫腻》长文，播放量破 50 万',
+    platform:'douyin', triggerTime:'07:40', relatedCount:167, assigneeId:'u2', status:'processing',
+    category:'价格争议', deadlineMin:110, responseDraft:'针对近期价格波动引发的用户疑问，我们说明如下：本次调整为促销周期结束后的常规价格回调，所有正式售价均在官方渠道公示。',
+    timeline:[
+      {time:'07:40', text:'系统监测到抖音视频声量异常，自动触发 P0 预警'},
+      {time:'07:52', text:'李总监已认领，安排产品团队核对价格策略记录'},
+      {time:'08:30', text:'口径草稿已生成，等待最终确认'}
+    ],
+    sourcePosts:[
+      {platform:'抖音', author:'数码评测老白', text:'618 前一天偷偷涨价 100，第二天打个折忽悠大家，这套路我熟', time:'07:38'}
+    ]
+  },
+  {
+    id:'AL-0093', level:'P1', title:'小红书出现多条“退款流程超时”笔记，24 小时内新增 38 条相关内容',
+    platform:'xhs', triggerTime:'09:05', relatedCount:38, assigneeId:'u1', status:'pending',
+    category:'功能缺陷', deadlineMin:240, responseDraft:null,
+    timeline:[
+      {time:'09:05', text:'系统监测到关键词“退款”声量环比上升 210%，自动触发 P1 预警'}
+    ],
+    sourcePosts:[
+      {platform:'小红书', author:'糖糖爱游戏', text:'退货三次官方客服都不给回复', time:'09:19'},
+      {platform:'小红书', author:'开箱不吃亏', text:'退款走了快三周了，谁在处理啊', time:'08:47'}
+    ]
+  },
+  {
+    id:'AL-0085', level:'P1', title:'知乎问题“如何看待 Youdoo Box 系统更新后频繁死机”获赞量快速上升',
+    platform:'zhihu', triggerTime:'昨日 21:14', relatedCount:52, assigneeId:'u3', status:'confirm',
+    category:'功能缺陷', deadlineMin:900, responseDraft:'我们已确认相关功能异常问题，技术团队正在加急修复，预计将于近期版本更新中同步上线。',
+    timeline:[
+      {time:'昨日 21:14', text:'系统监测到知乎问题热度异常，自动触发 P1 预警'},
+      {time:'昨日 22:30', text:'王产品已认领，确认为系统更新引入的已知 Bug'},
+      {time:'今日 08:10', text:'口径已生成并提交确认，等待发布'}
+    ],
+    sourcePosts:[
+      {platform:'知乎', author:'知乎-数码搬运工', text:'更新到最新系统后死机频率明显变高，求解', time:'昨日 21:10'}
+    ]
+  },
+  {
+    id:'AL-0079', level:'P1', title:'贴吧“掌机吧”出现关于开机黑屏问题的集中讨论帖',
+    platform:'tieba', triggerTime:'前日 15:22', relatedCount:29, assigneeId:'u1', status:'archived',
+    category:'功能缺陷', deadlineMin:0, responseDraft:'该问题已在 v2.3.1 版本更新中修复，感谢用户反馈。',
+    timeline:[
+      {time:'前日 15:22', text:'系统监测到相关讨论帖聚集，自动触发 P1 预警'},
+      {time:'前日 16:40', text:'张舆情核实为已知固件问题，已提交技术团队'},
+      {time:'昨日 10:00', text:'v2.3.1 版本发布修复补丁，口径确认并归档'}
+    ],
+    sourcePosts:[
+      {platform:'贴吧', author:'掌机吧-老玩家', text:'开机黑屏三次才好，是不是我买到瑕疵品了', time:'前日 15:20'}
+    ]
+  }
+];
+
+var COOLDOWN_EVENTS = [
+  {id:'AL-0079', title:'贴吧开机黑屏集中讨论', closedAt:'昨日 10:00', resolution:'v2.3.1 版本修复补丁已发布，口径确认并归档'},
+  {id:'AL-0061', title:'B站《掌机横评》视频负面观点扩散', closedAt:'3 天前', resolution:'官方评论区置顶说明后声量回落，标记为已处理'},
+  {id:'AL-0054', title:'京东评价区集中出现“物流破损”反馈', closedAt:'5 天前', resolution:'联系物流方加强包装规范，投诉量下降 80%'},
+  {id:'AL-0047', title:'知乎“优度日化”串味话题被误关联品牌', closedAt:'8 天前', resolution:'核实为无关企业，已加入串味词库，避免后续误判'},
+  {id:'AL-0039', title:'小红书“开箱视频配件缺失”集中反馈', closedAt:'12 天前', resolution:'排查为个别批次装箱疏漏，联系仓储方补发配件后归档'}
+];
+
+/* ===================== 报告中心 ===================== */
+var SOURCE_DOCS = {
+  'D-101':{title:'微博话题《Youdoo Box 疑似自燃》原始信源核查记录', excerpt:'经 EXIF 与设备序列号核对，原图与官方设备型号不符，疑似旧机型故障图片被移花接木。'},
+  'D-102':{title:'618 价格策略执行记录', excerpt:'6 月 14 日至 6 月 18 日执行大促价，6 月 19 日起恢复常规价，所有价格均在官网公示。'},
+  'D-103':{title:'退款流程 SLA 复核报告', excerpt:'本期退款平均处理时长 9.2 天，超出承诺时效 3-5 工作日，主因客服排班不足。'},
+  'D-104':{title:'ABSA 六维情绪周度统计原始数据', excerpt:'售后服务维度净情绪分本周 -0.44，为六维中唯一负值维度，环比走低 0.06。'},
+  'D-105':{title:'全平台声量与情绪极性周度汇总表', excerpt:'本周全平台合计新增声量 5824 条，正面占比 58.6%，负面占比 26.1%，中性占比 15.3%。'},
+  'D-106':{title:'竞品 KINHANK 声量占比（SOV）监测记录', excerpt:'近 30 天 Youdoo Box 声量占比 58%，KINHANK 占比 42%，环比差距收窄 3 个百分点。'}
+};
+
+var REPORTS = [
+  {
+    id:'RPT-2026W29', period:'2026 年第 29 周（07-06 ~ 07-12）', status:'draft',
+    author:'张舆情', reviewer:'李总监', submittedAt:null, reviewedAt:null, pushedAt:null, reviewNote:'',
+    content:[
+      {text:'本周品牌健康指数 BHI 环比下降 13 点，主要受“疑似自燃”话题与售后时效争议影响。', cite:'D-101'},
+      {text:'售后服务维度净情绪分 -0.44，为六维中唯一负值，退款平均处理时长 9.2 天，超出承诺时效。', cite:'D-103'},
+      {text:'ABSA 数据显示游戏兼容维度持续保持最高净情绪分 0.61，是当前口碑最稳固的优势维度。', cite:'D-104'},
+      {text:'全平台合计新增声量 5824 条，正面占比 58.6%，负面占比 26.1%，整体舆情结构基本健康。', cite:'D-105'}
+    ]
+  },
+  {
+    id:'RPT-2026W28', period:'2026 年第 28 周（06-29 ~ 07-05）', status:'pending',
+    author:'张舆情', reviewer:'李总监', submittedAt:'07-06 09:30', reviewedAt:null, pushedAt:null, reviewNote:'',
+    content:[
+      {text:'本周 618 大促收官，价格争议类话题声量环比上升 40%，已核实为常规价格回调被误读。', cite:'D-102'},
+      {text:'整体正面声量占比 58.6%，环比提升 4.2 个百分点，主要得益于游戏兼容性口碑扩散。', cite:'D-104'},
+      {text:'竞品 KINHANK 声量占比环比收窄至 42%，需关注其下周新品发布会带来的声量冲击。', cite:'D-106'}
+    ]
+  },
+  {
+    id:'RPT-2026W27', period:'2026 年第 27 周（06-22 ~ 06-28）', status:'published',
+    author:'张舆情', reviewer:'李总监', submittedAt:'06-29 09:12', reviewedAt:'06-29 14:20', pushedAt:'06-29 14:25',
+    reviewNote:'内容核实充分，同意发布。',
+    content:[
+      {text:'本周未出现 P0 级预警事件，舆情整体平稳，BHI 维持在 71-73 区间。', cite:'D-104'},
+      {text:'售后服务负面声量已连续两周上升，建议产品团队关注退款流程效率问题。', cite:'D-103'}
+    ]
+  }
+];
+
+var BOSS_DAILY = [
+  {date:'今日 09:00', text:'今日舆情：1 个 P0 预警处理中（疑似自燃话题，已核实为不实信息），售后时效仍是本周主要负面来源。'},
+  {date:'昨日 09:00', text:'昨日舆情：整体平稳，无新增 P0/P1，贴吧黑屏问题修复补丁已发布并归档。'},
+  {date:'前日 09:00', text:'前日舆情：B站掌机横评视频引发短暂负面讨论，官方置顶回应后声量回落。'},
+  {date:'3 天前 09:00', text:'舆情：知乎串味话题误关联品牌已核实并归入词库，不影响整体声量统计。'},
+  {date:'4 天前 09:00', text:'舆情：京东物流破损投诉经排查为个别批次问题，联系物流方整改后投诉量下降。'}
+];
+
+var BACKLOG = [
+  {demand:'系统散热优化补丁', platform:'微博/抖音', count:186, sentiment:'负面', roadmap:'开发中', expanded:false},
+  {demand:'退款流程提速', platform:'小红书/京东', count:142, sentiment:'负面', roadmap:'评估中', expanded:false},
+  {demand:'游戏兼容性列表更新', platform:'小红书/B站', count:98, sentiment:'中性', roadmap:'已排期', expanded:false},
+  {demand:'客服响应速度提升', platform:'全平台', count:76, sentiment:'负面', roadmap:'评估中', expanded:false},
+  {demand:'物流破损率优化', platform:'京东/贴吧', count:54, sentiment:'负面', roadmap:'已排期', expanded:false},
+  {demand:'开机黑屏问题彻底修复', platform:'贴吧/知乎', count:41, sentiment:'负面', roadmap:'已上线', expanded:false},
+  {demand:'价格公示透明化说明', platform:'抖音/微博', count:39, sentiment:'中性', roadmap:'评估中', expanded:false}
+];
+
+/* ===================== 竞品监控 ===================== */
+var SOV = [
+  {brand:'Youdoo Box', pct:58, color:'#1c7ed6'},
+  {brand:'KINHANK', pct:42, color:'#862e9c'}
+];
+var COMPETITOR_ABSA = [
+  {dim:'硬件质量', youdooPos:214, youdooNeg:132, kinhankPos:180, kinhankNeg:110},
+  {dim:'系统体验', youdooPos:188, youdooNeg:96, kinhankPos:150, kinhankNeg:140},
+  {dim:'游戏兼容', youdooPos:241, youdooNeg:58, kinhankPos:260, kinhankNeg:44},
+  {dim:'售后服务', youdooPos:79, youdooNeg:203, kinhankPos:120, kinhankNeg:130},
+  {dim:'价格', youdooPos:196, youdooNeg:87, kinhankPos:140, kinhankNeg:160},
+  {dim:'物流', youdooPos:132, youdooNeg:41, kinhankPos:110, kinhankNeg:90}
+];
+var KINHANK_FEED = [
+  {time:'09:10', text:'KINHANK Super Console 新品发布会官宣定档下周三'},
+  {time:'08:22', text:'KINHANK 官方账号回应“做工缩水”质疑，称为供应链调整所致'},
+  {time:'昨日 20:05', text:'多个评测号收到 KINHANK 新品测试机，首批评测将于本周发布'},
+  {time:'昨日 14:30', text:'KINHANK 天猫旗舰店上线满减活动，声量环比上升 18%'},
+  {time:'2 天前 11:00', text:'KINHANK 被曝部分渠道客服响应超时，用户满意度评分小幅下滑'}
+];
+var DUAL_TIMELINE = [
+  {brand:'youdoo', date:'07-09', text:'Youdoo Box 疑似自燃话题触发 P0 预警，核实为不实信息'},
+  {brand:'kinhank', date:'07-09', text:'KINHANK 回应做工缩水质疑'},
+  {brand:'youdoo', date:'07-06', text:'Youdoo Box 618 大促收官，价格争议声量上升'},
+  {brand:'kinhank', date:'07-04', text:'KINHANK 官宣新品发布会定档'},
+  {brand:'youdoo', date:'06-29', text:'Youdoo Box 周报显示 BHI 维持 71-73 区间，整体平稳'},
+  {brand:'kinhank', date:'06-27', text:'KINHANK 天猫旗舰店上线满减活动'},
+  {brand:'youdoo', date:'06-22', text:'Youdoo Box 贴吧黑屏问题修复补丁发布并归档'}
+];
+
+/* ===================== 系统配置 ===================== */
+var PLATFORM_SCHEDULE = PLATFORMS.map(function(p){
+  return {id:p.id, name:p.name, enabled:p.status!=='fail', cron:p.cron};
+});
+var LLM_CONFIG = {model:'GPT-4o-mini（内部代理）', temperature:0.3, maxTokens:2000, promptVersion:'v3.2-舆情专用'};
+var BUDGET = {used:1862, total:5000, unit:'元 / 月'};
+var FEISHU = {webhook:'https://open.feishu.cn/open-apis/bot/v2/hook/xxxx-xxxx-xxxx', enabled:true, lastPush:'今日 09:12'};
+
+/* ===================== 舆情知识库 ===================== */
+var KB_CATEGORIES = [
+  {key:'口径', label:'📋 应对口径'},
+  {key:'模板', label:'📊 分析模板'},
+  {key:'案例', label:'📁 历史案例', subs:['发热投诉','价格争议','功能缺陷']},
+  {key:'串味', label:'🚫 串味词库'}
+];
+
+var KNOWLEDGE = [
+  {id:'K001', category:'口径', subcategory:'', title:'发热投诉标准应对口径 v3', content:RESPONSE_TEMPLATES['发热投诉'], refCount:12, updatedAt:'07-09 09:10', status:'正常'},
+  {id:'K002', category:'口径', subcategory:'', title:'价格争议标准应对口径 v2', content:RESPONSE_TEMPLATES['价格争议'], refCount:8, updatedAt:'07-08 16:20', status:'正常'},
+  {id:'K003', category:'口径', subcategory:'', title:'功能缺陷标准应对口径 v2', content:RESPONSE_TEMPLATES['功能缺陷'], refCount:5, updatedAt:'06-29 10:00', status:'正常'},
+  {id:'K004', category:'模板', subcategory:'', title:'周报撰写模板（含引用规范）', content:'一、本周舆情总览（BHI 变化 + 归因）\n二、ABSA 六维明细（含代表性原文引用）\n三、预警事件复盘\n四、诉求 Backlog 更新\n五、下周关注重点', refCount:9, updatedAt:'06-20 11:00', status:'正常'},
+  {id:'K005', category:'模板', subcategory:'', title:'ABSA 六维分析模板', content:'硬件质量 / 系统体验 / 游戏兼容 / 售后服务 / 价格 / 物流 —— 每维度需包含：正面数、负面数、净情绪分、代表性原文、环比变化。', refCount:14, updatedAt:'05-15 09:30', status:'正常'},
+  {id:'K006', category:'案例', subcategory:'发热投诉', title:'2026-06 发热投诉集中爆发案例复盘', content:'6 月大促期间因高负载使用场景增多，发热类投诉环比上升 65%。处置：24 小时内发布系统级说明，48 小时内推送优化补丁，投诉量 5 天内回落至正常水平。', refCount:6, updatedAt:'06-10 14:00', status:'正常'},
+  {id:'K007', category:'案例', subcategory:'价格争议', title:'2026 年 618 价格争议案例复盘', content:'大促结束后价格回调被第三方评测号解读为“价格猫腻”，核实为常规价格策略。处置：产品团队出具价格执行记录，运营总监审核后统一口径回应。', refCount:4, updatedAt:'07-08 16:20', status:'需更新'},
+  {id:'K008', category:'案例', subcategory:'功能缺陷', title:'v2.3.1 黑屏问题修复案例复盘', content:'贴吧集中反馈开机黑屏问题，核实为固件已知 Bug，v2.3.1 版本修复后归档。', refCount:3, updatedAt:'06-01 10:00', status:'已过期'},
+  {id:'K009', category:'串味', subcategory:'', title:'串味词库：优度日化 / 有度科技', content:'“优度日化”“有度科技”等企业与本品牌“Youdoo / 优度盒子”无关联，抓取到相关内容需人工复核后按串味处理，不计入舆情统计。', refCount:7, updatedAt:'07-09 09:19', status:'正常'},
+  {id:'K010', category:'串味', subcategory:'', title:'串味词库：金汉克建材', content:'“金汉克建材”与竞品品牌“KINHANK”无关联，命中该关键词的内容需自动过滤，不计入竞品声量统计。', refCount:2, updatedAt:'06-15 09:00', status:'正常'},
+  {id:'K011', category:'口径', subcategory:'', title:'虚假信息辟谣标准应对口径 v1', content:RESPONSE_TEMPLATES['虚假信息'], refCount:3, updatedAt:'07-09 08:30', status:'正常'},
+  {id:'K012', category:'模板', subcategory:'', title:'日报（老板一句话）撰写模板', content:'一句话总结当日舆情态势（正面/平稳/需关注）+ 关键数字（新增预警数、声量环比）+ 若有 P0/P1 事件需附一句处置进展说明，全文控制在 80 字以内，便于管理层快速阅读。', refCount:11, updatedAt:'06-18 09:00', status:'正常'},
+  {id:'K013', category:'模板', subcategory:'', title:'AI 舆情问答知识来源标注规范', content:'AI 问答回复必须标注引用的原始数据来源编号（如 D-101），涉及具体数值需与情绪分析、报告中心页面的最新数据保持一致，避免口径不一致引发二次舆情。', refCount:6, updatedAt:'06-25 15:40', status:'正常'},
+  {id:'K014', category:'案例', subcategory:'发热投诉', title:'2025-12 冬季低温误判发热投诉案例复盘', content:'冬季部分用户将设备正常运行温感误判为发热异常，经核实为环境温差导致的体感差异。处置：制作温感科普说明图文，投放至客服话术库，投诉量下降 40%。', refCount:5, updatedAt:'2025-12-20 10:00', status:'已过期'},
+  {id:'K015', category:'案例', subcategory:'价格争议', title:'2025-11 双十一预售价格争议案例复盘', content:'预售价与现货价倒挂引发用户质疑，核实为平台侧价保规则未同步更新。处置：联合电商团队 24 小时内补偿价差，并在后续大促前建立价格核对清单。', refCount:4, updatedAt:'2025-11-15 09:20', status:'已过期'}
+];
+
+/* ===================== 调度日历（2026-07） ===================== */
+var CAL_DOW = ['一','二','三','四','五','六','日'];
+var CALENDAR_TASKS = [
+  {id:'CT01', date:'2026-07-01', type:'collect', name:'7 平台全量采集计划', assigneeId:'u1', status:'已完成'},
+  {id:'CT02', date:'2026-07-03', type:'report', name:'第 27 周周报发布截止', assigneeId:'u1', status:'已完成'},
+  {id:'CT03', date:'2026-07-05', type:'collect', name:'贴吧接口专项检修', assigneeId:'u1', status:'已完成'},
+  {id:'CT04', date:'2026-07-06', type:'report', name:'第 28 周周报草稿提交', assigneeId:'u1', status:'逾期'},
+  {id:'CT05', date:'2026-07-07', type:'alert', name:'AL-0088 价格争议跟进复核', assigneeId:'u2', status:'已完成'},
+  {id:'CT06', date:'2026-07-08', type:'alert', name:'AL-0085 知乎死机问题口径确认', assigneeId:'u3', status:'进行中'},
+  {id:'CT07', date:'2026-07-09', type:'alert', name:'AL-0091 自燃话题应急处置', assigneeId:'u1', status:'进行中'},
+  {id:'CT08', date:'2026-07-09', type:'collect', name:'微博接口限流排查', assigneeId:'u1', status:'待处理'},
+  {id:'CT09', date:'2026-07-10', type:'report', name:'第 29 周周报总监审核', assigneeId:'u2', status:'待处理'},
+  {id:'CT10', date:'2026-07-11', type:'collect', name:'知乎/京东周度巡检', assigneeId:'u1', status:'待处理'},
+  {id:'CT11', date:'2026-07-12', type:'report', name:'第 29 周周报飞书推送', assigneeId:'u1', status:'待处理'},
+  {id:'CT12', date:'2026-07-14', type:'alert', name:'季度预警复盘会', assigneeId:'u3', status:'待处理'},
+  {id:'CT13', date:'2026-07-16', type:'collect', name:'关键词库季度校准', assigneeId:'u1', status:'待处理'},
+  {id:'CT14', date:'2026-07-20', type:'report', name:'第 30 周周报草稿', assigneeId:'u1', status:'待处理'},
+  {id:'CT15', date:'2026-07-25', type:'collect', name:'7 平台采集健康度月度评估', assigneeId:'u1', status:'待处理'}
+];
+
+/* ===================== 总览动态 / 趋势小图 ===================== */
+var ACTIVITY_LOG = [
+  {time:'09:45', text:'新增预警相关舆情 1 条，已归入 AL-0091 追踪'},
+  {time:'09:32', text:'张舆情通过复核 wb-20260709-029'},
+  {time:'09:20', text:'抖音采集任务完成，本期新增 342 条'},
+  {time:'09:10', text:'知识库新增沉淀：串味词库「优度日化」更新'},
+  {time:'08:55', text:'张舆情认领 AL-0091 疑似自燃话题预警'},
+  {time:'08:52', text:'系统自动触发 P0 级预警 AL-0091'},
+  {time:'08:40', text:'知乎采集任务完成，本期新增 41 条'},
+  {time:'08:30', text:'AL-0088 应对口径草稿已生成，待李总监确认'},
+  {time:'08:10', text:'AL-0085 口径已确认，等待发布'},
+  {time:'07:40', text:'系统自动触发 P0 级预警 AL-0088'},
+  {time:'07:35', text:'李总监认领 AL-0088 价格争议话题预警'},
+  {time:'07:30', text:'京东采集任务完成，本期新增 63 条'},
+  {time:'07:00', text:'系统完成夜间全平台巡检，未发现新增异常'},
+  {time:'昨日 23:10', text:'贴吧采集任务失败，已记录待人工排查'},
+  {time:'昨日 22:30', text:'王产品认领 AL-0085 知乎死机问题预警'},
+  {time:'昨日 10:00', text:'AL-0079 贴吧黑屏问题修复补丁发布，口径确认并归档'}
+];
+var STAT_SPARK_BHI = [71,69,73,68,64,60,58];
+var STAT_SPARK_VOL = [820,910,860,940,1010,1080,1103];
+var STAT_SPARK_NEG = [12,14,11,16,18,21,19];
+var STAT_SPARK_ALERT = [1,0,1,0,1,2,2];
+
+/* ===================== 通用工具函数 ===================== */
+function $(sel){ return document.querySelector(sel); }
+function $all(sel){ return Array.prototype.slice.call(document.querySelectorAll(sel)); }
+function esc(str){
+  if(str===null||str===undefined) return '';
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function highlightText(str, kw){
+  str = esc(str);
+  if(!kw) return str;
+  var kwEsc = esc(kw);
+  var lowerStr = str.toLowerCase();
+  var lowerKw = kwEsc.toLowerCase();
+  var idx = lowerStr.indexOf(lowerKw);
+  if(idx===-1) return str;
+  var out = '';
+  var cursor = 0;
+  while(idx!==-1){
+    out += str.substring(cursor, idx);
+    out += '<mark>' + str.substring(idx, idx+kwEsc.length) + '</mark>';
+    cursor = idx + kwEsc.length;
+    idx = lowerStr.indexOf(lowerKw, cursor);
+  }
+  out += str.substring(cursor);
+  return out;
+}
+function showToast(msg, kind){
+  var c = $('#toastContainer');
+  var el = document.createElement('div');
+  el.className = 'toast' + (kind==='green' ? ' toast-green' : kind==='red' ? ' toast-red' : '');
+  el.textContent = msg;
+  c.appendChild(el);
+  setTimeout(function(){
+    if(el.parentNode) el.parentNode.removeChild(el);
+  }, 3000);
+}
+function polarityBadge(p){
+  if(p==='pos') return '<span class="badge badge-green">正面</span>';
+  if(p==='neg') return '<span class="badge badge-red">负面</span>';
+  return '<span class="badge badge-gray">中性</span>';
+}
+function typeBadge(t){
+  var map = {normal:'常规', irony:'反讽', shuijun:'水军', chuanwei:'串味'};
+  var cls = {normal:'badge-outline', irony:'badge-amber', shuijun:'badge-red', chuanwei:'badge-amber'};
+  return '<span class="badge ' + (cls[t]||'badge-gray') + '">' + (map[t]||t) + '</span>';
+}
+function levelBadge(lv){
+  if(lv==='P0') return '<span class="badge badge-red">P0 危机</span>';
+  return '<span class="badge badge-amber">P1 跟进</span>';
+}
+function statusBadge(s){
+  var map = {pending:['待复核','badge-blue'], approved:['已通过','badge-green'], rejected:['已拒绝','badge-red']};
+  var v = map[s] || ['未知','badge-gray'];
+  return '<span class="badge ' + v[1] + '">' + v[0] + '</span>';
+}
+function statusBadgeAlert(s){
+  var map = {pending:['待处置','badge-blue'], processing:['处理中','badge-amber'], confirm:['待确认','badge-outline'], archived:['已归档','badge-gray']};
+  var v = map[s] || ['未知','badge-gray'];
+  return '<span class="badge ' + v[1] + '">' + v[0] + '</span>';
+}
+function taskStatusBadge(s){
+  var map = {'待处理':'badge-blue', '进行中':'badge-amber', '已完成':'badge-green', '逾期':'badge-red', '草稿':'badge-gray'};
+  return '<span class="badge ' + (map[s]||'badge-gray') + '">' + s + '</span>';
+}
+function reportStatusBadge(s){
+  var map = {draft:['草稿','badge-gray'], pending:['待审核','badge-amber'], published:['已发布','badge-green']};
+  var v = map[s] || ['未知','badge-gray'];
+  return '<span class="badge ' + v[1] + '">' + v[0] + '</span>';
+}
+function kbStatusBadge(s){
+  var map = {'正常':'badge-green', '已过期':'badge-gray', '需更新':'badge-amber'};
+  return '<span class="badge ' + (map[s]||'badge-gray') + '">' + s + '</span>';
+}
+function healthDot(status){
+  var cls = status==='ok' ? 'ok' : status==='suspect' ? 'suspect' : 'fail';
+  return '<span class="health-dot ' + cls + '"></span>';
+}
+function confColor(c){
+  if(c>0.8) return 'var(--green)';
+  if(c>0.5) return 'var(--amber)';
+  return 'var(--red)';
+}
+function calTypeColor(t){
+  if(t==='collect') return 'var(--accent)';
+  if(t==='report') return 'var(--amber)';
+  if(t==='alert') return 'var(--red)';
+  return 'var(--green)';
+}
+function calTypeLabel(t){
+  var map = {collect:'采集计划', report:'报告排期', alert:'预警跟进', done:'已完成'};
+  return map[t] || t;
+}
+
+/* ===================== SVG 图表构造 ===================== */
+function buildLineChart(data, keyX, keyY, color, w, h){
+  w = w || 560; h = h || 160;
+  var pad = 28;
+  var vals = data.map(function(d){ return d[keyY]; });
+  var min = Math.min.apply(null, vals);
+  var max = Math.max.apply(null, vals);
+  if(min===max){ min -= 1; max += 1; }
+  var stepX = (w - pad*2) / (data.length - 1);
+  var pts = data.map(function(d,i){
+    var x = pad + i*stepX;
+    var y = h - pad - ((d[keyY]-min)/(max-min))*(h-pad*2);
+    return {x:x, y:y, label:d[keyX], val:d[keyY]};
+  });
+  var pathD = pts.map(function(p,i){ return (i===0?'M':'L') + p.x.toFixed(1) + ',' + p.y.toFixed(1); }).join(' ');
+  var areaD = pathD + ' L' + pts[pts.length-1].x.toFixed(1) + ',' + (h-pad) + ' L' + pts[0].x.toFixed(1) + ',' + (h-pad) + ' Z';
+  var svg = '<svg width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '">';
+  svg += '<path d="' + areaD + '" fill="' + color + '" opacity="0.08"></path>';
+  svg += '<path d="' + pathD + '" fill="none" stroke="' + color + '" stroke-width="2.5"></path>';
+  for(var i=0;i<pts.length;i++){
+    svg += '<circle cx="' + pts[i].x.toFixed(1) + '" cy="' + pts[i].y.toFixed(1) + '" r="3.2" fill="' + color + '"></circle>';
+    svg += '<text x="' + pts[i].x.toFixed(1) + '" y="' + (h-6) + '" font-size="10" fill="#495057" text-anchor="middle">' + esc(pts[i].label) + '</text>';
+    svg += '<text x="' + pts[i].x.toFixed(1) + '" y="' + (pts[i].y-8).toFixed(1) + '" font-size="10" fill="' + color + '" text-anchor="middle" font-weight="700">' + pts[i].val + '</text>';
+  }
+  svg += '</svg>';
+  return svg;
+}
+function buildSparkline(vals, color, w, h){
+  w = w || 96; h = h || 28;
+  var min = Math.min.apply(null, vals);
+  var max = Math.max.apply(null, vals);
+  if(min===max){ min -= 1; max += 1; }
+  var stepX = w / (vals.length - 1);
+  var pts = vals.map(function(v,i){
+    var x = i*stepX;
+    var y = h - ((v-min)/(max-min))*h;
+    return {x:x, y:y};
+  });
+  var pathD = pts.map(function(p,i){ return (i===0?'M':'L') + p.x.toFixed(1) + ',' + p.y.toFixed(1); }).join(' ');
+  var svg = '<svg width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '">';
+  svg += '<path d="' + pathD + '" fill="none" stroke="' + color + '" stroke-width="2"></path>';
+  var last = pts[pts.length-1];
+  svg += '<circle cx="' + last.x.toFixed(1) + '" cy="' + last.y.toFixed(1) + '" r="2.4" fill="' + color + '"></circle>';
+  svg += '</svg>';
+  return svg;
+}
+function buildRadarChart(dims, series, w, h){
+  w = w || 340; h = h || 340;
+  var cx = w/2, cy = h/2, r = Math.min(w,h)/2 - 46;
+  var n = dims.length;
+  var maxVal = 1;
+  var angleFor = function(i){ return (Math.PI*2*i/n) - Math.PI/2; };
+  var svg = '<svg width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '">';
+  var rings = [0.25,0.5,0.75,1];
+  for(var ri=0;ri<rings.length;ri++){
+    var ringPts = [];
+    for(var i=0;i<n;i++){
+      var a = angleFor(i);
+      ringPts.push((cx + Math.cos(a)*r*rings[ri]).toFixed(1) + ',' + (cy + Math.sin(a)*r*rings[ri]).toFixed(1));
+    }
+    svg += '<polygon points="' + ringPts.join(' ') + '" fill="none" stroke="#e9ecef" stroke-width="1"></polygon>';
+  }
+  for(i=0;i<n;i++){
+    var a2 = angleFor(i);
+    var lx = cx + Math.cos(a2)*r, ly = cy + Math.sin(a2)*r;
+    svg += '<line x1="' + cx + '" y1="' + cy + '" x2="' + lx.toFixed(1) + '" y2="' + ly.toFixed(1) + '" stroke="#e9ecef" stroke-width="1"></line>';
+    var lxt = cx + Math.cos(a2)*(r+22), lyt = cy + Math.sin(a2)*(r+22);
+    svg += '<text x="' + lxt.toFixed(1) + '" y="' + lyt.toFixed(1) + '" font-size="11" fill="#495057" text-anchor="middle" dominant-baseline="middle">' + esc(dims[i]) + '</text>';
+  }
+  var pts = [];
+  for(i=0;i<n;i++){
+    var a3 = angleFor(i);
+    var norm = Math.max(0, Math.min(1, (series[i]+1)/2));
+    pts.push((cx + Math.cos(a3)*r*norm).toFixed(1) + ',' + (cy + Math.sin(a3)*r*norm).toFixed(1));
+  }
+  svg += '<polygon points="' + pts.join(' ') + '" fill="#1c7ed6" fill-opacity="0.18" stroke="#1c7ed6" stroke-width="2"></polygon>';
+  for(i=0;i<n;i++){
+    var coords = pts[i].split(',');
+    svg += '<circle cx="' + coords[0] + '" cy="' + coords[1] + '" r="3.4" fill="#1c7ed6"></circle>';
+  }
+  svg += '</svg>';
+  return svg;
+}
+
+/* ===================== 导航渲染 ===================== */
+function pendingReviewCount(){
+  return REVIEW_QUEUE.filter(function(r){ return r.status==='pending'; }).length;
+}
+function renderNav(){
+  var tabHtml = '';
+  for(var i=0;i<VIEWS.length;i++){
+    var v = VIEWS[i];
+    tabHtml += '<button class="top-tab' + (v.id===state.activeView?' active':'') + '" data-view="' + v.id + '" onclick="switchView(\'' + v.id + '\')">' + v.icon + ' ' + v.label + '</button>';
+  }
+  $('#topTabList').innerHTML = tabHtml;
+
+  var groups = [];
+  var groupMap = {};
+  for(i=0;i<VIEWS.length;i++){
+    var vv = VIEWS[i];
+    if(!groupMap[vv.group]){ groupMap[vv.group] = []; groups.push(vv.group); }
+    groupMap[vv.group].push(vv);
+  }
+  var sideHtml = '';
+  for(i=0;i<groups.length;i++){
+    var g = groups[i];
+    sideHtml += '<div class="side-group"><div class="side-group-title">' + g + '</div>';
+    var items = groupMap[g];
+    for(var j=0;j<items.length;j++){
+      var it = items[j];
+      var badge = '';
+      if(it.badgeFn){
+        var n = window[it.badgeFn] ? window[it.badgeFn]() : 0;
+        if(n>0) badge = '<span class="side-badge">' + n + '</span>';
+      }
+      sideHtml += '<button class="side-item' + (it.id===state.activeView?' active':'') + '" data-view="' + it.id + '" onclick="switchView(\'' + it.id + '\')"><span class="side-icon">' + it.icon + '</span>' + it.label + badge + '</button>';
+    }
+    sideHtml += '</div>';
+  }
+  sideHtml += '<div class="sidebar-footer"><b>Youdoo Box 舆情监控</b>v2.0 · 处置责任人：张舆情</div>';
+  $('#sidebar').innerHTML = sideHtml;
+}
+
+var state = {
+  activeView:'overview',
+  reviewSelected:{},
+  activeReviewId:null,
+  analysisPeriod:'week',
+  activeReportId:'RPT-2026W29',
+  qaHistory:[],
+  reportsTab:'weekly',
+  kbFilter:{category:null, subcategory:null, search:''},
+  kbExpandedId:null,
+  calYear:2026,
+  calMonth:7,
+  calSelectedDate:'2026-07-09',
+  sidebarOpen:false
+};
+
+function switchView(id){
+  state.activeView = id;
+  $all('.view').forEach(function(v){ v.classList.remove('active'); });
+  var target = $('#view-' + id);
+  if(target) target.classList.add('active');
+  var meta = VIEW_META[id] || {title:'', sub:''};
+  $('#viewTitle').textContent = meta.title;
+  $('#viewSubtitle').textContent = meta.sub;
+  renderNav();
+  if(window.innerWidth<=960){ state.sidebarOpen=false; $('#sidebar').classList.remove('open'); }
+  if(id==='overview') renderOverview();
+  if(id==='collect') renderCollectTable();
+  if(id==='review') { renderReviewFilters(); applyReviewFilters(); renderChuanweiPanel(); }
+  if(id==='analysis') renderAnalysisView();
+  if(id==='alerts') { renderAlertsKanban(); renderCooldownList(); renderFalsePositiveList(); }
+  if(id==='reports') renderReportsTab();
+  if(id==='competitor') renderCompetitorView();
+  if(id==='config') renderConfigView();
+  if(id==='knowledge') renderKnowledgeView();
+  if(id==='calendar') renderCalendarView();
+}
+function toggleSidebar(){
+  state.sidebarOpen = !state.sidebarOpen;
+  $('#sidebar').classList.toggle('open', state.sidebarOpen);
+}
+
+function renderHealthStrip(){
+  var html = '';
+  for(var i=0;i<PLATFORMS.length;i++){
+    var p = PLATFORMS[i];
+    html += '<span class="health-pill">' + healthDot(p.status) + p.name + '</span>';
+  }
+  $('#healthStrip').innerHTML = html;
+}
+
+/* ===================== 1. 总览工作台 ===================== */
+function renderOverview(){
+  renderTopRiskCard();
+  renderOverviewStats();
+  renderTodoList();
+  renderPlatformHealthGrid();
+  renderActivityTimeline();
+  renderBHIChart();
+  renderRecentAlertsList();
+  $('#quickReviewCount').textContent = pendingReviewCount();
+  $('#quickReviewCount2').textContent = pendingReviewCount();
+}
+function renderTopRiskCard(){
+  var top = null;
+  for(var i=0;i<ALERTS.length;i++){
+    var a = ALERTS[i];
+    if(a.status==='archived') continue;
+    if(!top) { top = a; continue; }
+    if(a.level==='P0' && top.level!=='P0') top = a;
+  }
+  if(!top){ $('#topRiskCard').innerHTML = '<div class="empty-hint">当前无进行中的高风险预警</div>'; return; }
+  var html = '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap;">';
+  html += '<div style="flex:1;min-width:260px;">';
+  html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">' + levelBadge(top.level) + statusBadgeAlert(top.status) + '<span class="muted" style="font-size:11.5px;">触发于 ' + top.triggerTime + '</span></div>';
+  html += '<div style="font-size:15px;font-weight:800;line-height:1.5;margin-bottom:8px;">⚠ ' + esc(top.title) + '</div>';
+  html += '<div style="font-size:12.5px;color:var(--text-secondary);">相关内容 ' + top.relatedCount + ' 条 · 处置责任人 ' + userChip(top.assigneeId) + '</div>';
+  html += '</div>';
+  html += '<button class="btn btn-primary" onclick="switchView(\'alerts\');openAlertDrawer(\'' + top.id + '\')">立即处置 →</button>';
+  html += '</div>';
+  $('#topRiskCard').innerHTML = html;
+}
+function renderOverviewStats(){
+  var negCount = REVIEW_QUEUE.filter(function(r){ return r.polarity==='neg'; }).length;
+  var activeAlerts = ALERTS.filter(function(a){ return a.status!=='archived'; }).length;
+  var totalVol = PLATFORMS.reduce(function(s,p){ return s+p.volume; }, 0);
+  var stats = [
+    {label:'今日采集总量', value:totalVol, trend:'up', trendText:'+8.2%', spark:STAT_SPARK_VOL, color:'#1c7ed6'},
+    {label:'品牌健康指数 BHI', value:BHI_TREND[BHI_TREND.length-1].score, trend:'down', trendText:'-2 点', spark:STAT_SPARK_BHI, color:'#e67700'},
+    {label:'负面声量占比', value:negCount + ' 条', trend:'up', trendText:'较昨日 +3', spark:STAT_SPARK_NEG, color:'#c92a2a'},
+    {label:'进行中预警', value:activeAlerts, trend:'flat', trendText:'2 个 P0', spark:STAT_SPARK_ALERT, color:'#c92a2a'}
+  ];
+  var html = '';
+  for(var i=0;i<stats.length;i++){
+    var s = stats[i];
+    var arrow = s.trend==='up' ? '▲' : s.trend==='down' ? '▼' : '·';
+    html += '<div class="stat-card">';
+    html += '<div class="stat-label">' + s.label + '</div>';
+    html += '<div class="stat-value">' + s.value + '</div>';
+    html += '<div class="stat-trend ' + s.trend + '">' + arrow + ' ' + s.trendText + '</div>';
+    html += '<div class="sparkline-wrap">' + buildSparkline(s.spark, s.color) + '</div>';
+    html += '</div>';
+  }
+  $('#overviewStats').innerHTML = html;
+}
+function renderTodoList(){
+  var todos = [];
+  todos.push({text:'处置 P0 预警 AL-0091「疑似自燃」话题', action:"switchView('alerts');openAlertDrawer('AL-0091')"});
+  todos.push({text:'复核数据质检队列中 ' + pendingReviewCount() + ' 条待处理内容', action:"switchView('review')"});
+  todos.push({text:'提交第 29 周周报草稿审核', action:"switchView('reports')"});
+  todos.push({text:'处理 CT04「第 28 周周报草稿提交」（已逾期）', action:"switchView('calendar');selectCalDate('2026-07-06')"});
+  todos.push({text:'确认 AL-0085 应对口径并发布', action:"switchView('alerts');openAlertDrawer('AL-0085')"});
+  var html = '';
+  for(var i=0;i<todos.length;i++){
+    html += '<div class="todo-item" onclick="' + todos[i].action + '">☐ ' + esc(todos[i].text) + '</div>';
+  }
+  $('#todoList').innerHTML = html;
+}
+function renderPlatformHealthGrid(){
+  var html = '';
+  for(var i=0;i<PLATFORMS.length;i++){
+    var p = PLATFORMS[i];
+    html += '<div class="card" style="padding:12px;cursor:pointer;" onclick="switchView(\'collect\')">';
+    html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;"><b style="font-size:12.8px;">' + p.name + '</b>' + healthDot(p.status) + '</div>';
+    html += '<div class="muted" style="font-size:11px;">上次运行 ' + p.lastRun + '</div>';
+    html += '<div style="font-size:16px;font-weight:800;margin-top:4px;">' + p.volume + '</div>';
+    html += '</div>';
+  }
+  $('#platformHealthGrid').innerHTML = html;
+}
+function renderActivityTimeline(){
+  var html = '';
+  for(var i=0;i<ACTIVITY_LOG.length;i++){
+    var a = ACTIVITY_LOG[i];
+    html += '<div class="activity-item"><span class="activity-dot"></span><span class="activity-time">' + a.time + '</span><span>' + esc(a.text) + '</span></div>';
+  }
+  $('#activityTimeline').innerHTML = html;
+}
+function renderBHIChart(){
+  $('#bhiChart').innerHTML = buildLineChart(BHI_TREND, 'date', 'score', '#1c7ed6', 620, 180);
+}
+function renderRecentAlertsList(){
+  var sorted = ALERTS.slice().filter(function(a){return a.status!=='archived';}).sort(function(a,b){ return a.level==='P0'?-1:1; });
+  var html = '';
+  for(var i=0;i<sorted.length;i++){
+    var a = sorted[i];
+    html += '<div class="alert-card' + (a.level==='P0'?' level-p0':'') + '" onclick="switchView(\'alerts\');openAlertDrawer(\'' + a.id + '\')">';
+    html += '<div class="a-meta">' + levelBadge(a.level) + statusBadgeAlert(a.status) + '</div>';
+    html += '<div class="a-title">' + esc(a.title) + '</div>';
+    html += '<div class="a-meta">' + userChip(a.assigneeId) + '<span>· ' + a.triggerTime + '</span></div>';
+    html += '</div>';
+  }
+  $('#recentAlertsList').innerHTML = html || '<div class="empty-hint">暂无进行中预警</div>';
+}
+
+/* ===================== 2. 采集接入 ===================== */
+function renderCollectTable(){
+  var html = '';
+  for(var i=0;i<COLLECT_TASKS.length;i++){
+    var t = COLLECT_TASKS[i];
+    html += '<tr><td><b>' + t.name + '</b></td>';
+    html += '<td>' + (t.status==='fail' ? '<span class="badge badge-red">采集失败</span>' : t.status==='suspect' ? '<span class="badge badge-amber">疑似异常</span>' : '<span class="badge badge-green">运行正常</span>') + '</td>';
+    html += '<td>' + t.lastRun + '</td>';
+    html += '<td>' + t.volume + ' 条</td>';
+    html += '<td>' + healthDot(t.status) + '</td>';
+    html += '<td><button class="btn btn-sm" onclick="triggerCollect(\'' + t.id + '\')">立即采集</button></td></tr>';
+  }
+  $('#collectTableBody').innerHTML = html;
+}
+function triggerCollect(id){
+  var t = null;
+  for(var i=0;i<COLLECT_TASKS.length;i++){ if(COLLECT_TASKS[i].id===id){ t=COLLECT_TASKS[i]; break; } }
+  if(!t) return;
+  showToast('已触发「' + t.name + '」采集任务', 'green');
+  t.lastRun = '刚刚';
+  renderCollectTable();
+}
+function quickCollect(){
+  showToast('已触发全平台采集任务，预计 3-5 分钟完成', 'green');
+  for(var i=0;i<COLLECT_TASKS.length;i++){ COLLECT_TASKS[i].lastRun = '刚刚'; }
+  if($('#view-collect').classList.contains('active')) renderCollectTable();
+}
+function toggleKeywordPanel(){
+  var panel = $('#keywordConfigPanel');
+  var open = panel.style.display!=='none';
+  panel.style.display = open ? 'none' : 'block';
+  $('#kwToggleBtn').textContent = open ? '展开配置' : '收起配置';
+  if(!open) renderKeywordConfigPreview();
+}
+function renderKeywordConfigPreview(){
+  var html = '';
+  for(var i=0;i<ENTITIES.length;i++){
+    var e = ENTITIES[i];
+    html += '<div class="section-gap"><b style="font-size:12.8px;">' + e.name + '</b>';
+    html += '<div style="margin:8px 0;"><span class="muted" style="font-size:11.5px;">别名：</span><div class="chip-row" style="margin-top:6px;">';
+    for(var j=0;j<e.aliases.length;j++){ html += '<span class="chip">' + e.aliases[j] + '</span>'; }
+    html += '</div></div>';
+    html += '<div style="margin:8px 0;"><span class="muted" style="font-size:11.5px;">串味排除词：</span><div class="chip-row" style="margin-top:6px;">';
+    for(j=0;j<e.mustNot.length;j++){ html += '<span class="chip chip-amber">' + e.mustNot[j] + '</span>'; }
+    html += '</div></div>';
+    html += '<div><span class="muted" style="font-size:11.5px;">危机加权词：</span><div class="chip-row" style="margin-top:6px;">';
+    for(j=0;j<e.crisisBoost.length;j++){ html += '<span class="chip chip-red">' + e.crisisBoost[j] + '</span>'; }
+    html += '</div></div></div>';
+  }
+  html += '<button class="btn btn-primary btn-sm" onclick="switchView(\'config\')">前往系统配置管理关键词 →</button>';
+  $('#keywordConfigPanel').innerHTML = html;
+}
+
+/* ===================== 3. 数据质检工作台 ===================== */
+function renderReviewFilters(){
+  var sel = $('#filterPlatform');
+  var html = '<option value="all">全部平台</option>';
+  for(var i=0;i<PLATFORMS.length;i++){ html += '<option value="' + PLATFORMS[i].id + '">' + PLATFORMS[i].name + '</option>'; }
+  sel.innerHTML = html;
+}
+function filteredReviewItems(){
+  var status = $('#filterStatus') ? $('#filterStatus').value : 'all';
+  var platform = $('#filterPlatform') ? $('#filterPlatform').value : 'all';
+  var conf = $('#filterConf') ? $('#filterConf').value : 'all';
+  return REVIEW_QUEUE.filter(function(r){
+    if(status!=='all' && r.status!==status) return false;
+    if(platform!=='all' && r.platform!==platform) return false;
+    if(conf==='low' && r.confidence>=0.5) return false;
+    if(conf==='mid' && (r.confidence<0.5 || r.confidence>0.8)) return false;
+    if(conf==='high' && r.confidence<=0.8) return false;
+    return true;
+  });
+}
+function applyReviewFilters(){
+  renderReviewList();
+}
+function renderChuanweiPanel(){
+  var items = REVIEW_QUEUE.filter(function(r){ return r.type==='chuanwei' && r.status==='pending'; });
+  var html = '<div class="panel-title">串味样本提醒 <small>可能与本品牌无关，需人工核实后一键归入串味词库</small></div>';
+  if(!items.length){ html += '<div class="empty-hint">当前无待处理串味样本</div>'; }
+  for(var i=0;i<items.length;i++){
+    var r = items[i];
+    html += '<div class="review-card chuanwei"><div class="rc-body">';
+    html += '<div class="rc-tags">' + typeBadge(r.type) + polarityBadge(r.polarity) + '<span class="muted" style="font-size:11px;">' + PLATFORM_NAMES[r.platform] + ' · ' + r.author + ' · ' + r.time + '</span></div>';
+    html += '<div class="rc-text">' + esc(r.text) + '</div>';
+    html += '<div class="rc-actions"><button class="btn btn-amber btn-sm" onclick="flagChuanwei(\'' + r.id + '\')">✓ 确认串味并归入词库</button><button class="btn btn-sm" onclick="setActiveReviewCard(\'' + r.id + '\')">查看详情</button></div>';
+    html += '</div></div>';
+  }
+  $('#chuanweiPanel').innerHTML = html;
+}
+function flagChuanwei(id){
+  var r = null;
+  for(var i=0;i<REVIEW_QUEUE.length;i++){ if(REVIEW_QUEUE[i].id===id){ r=REVIEW_QUEUE[i]; break; } }
+  if(!r) return;
+  r.status = 'rejected';
+  var words = r.text.match(/[一-龥]{2,6}/g) || [];
+  var kw = words[0] || r.text.substring(0,6);
+  KNOWLEDGE.unshift({id:'K' + (100+KNOWLEDGE.length), category:'串味', subcategory:'', title:'串味词库：' + kw + '（来自 ' + r.id + '）', content:'样本原文：' + r.text + '\n判定：与本品牌实体无关，命中后应自动过滤，不计入舆情统计。', refCount:1, updatedAt:'刚刚', status:'正常'});
+  showToast('已归入串味词库，样本已从复核队列移除', 'green');
+  renderChuanweiPanel();
+  renderReviewList();
+  refreshReviewBadges();
+}
+function renderReviewList(){
+  var items = filteredReviewItems();
+  $('#filterResultCount').textContent = '共 ' + items.length + ' 条';
+  var html = '';
+  for(var i=0;i<items.length;i++){
+    var r = items[i];
+    var cls = 'review-card';
+    if(r.id===state.activeReviewId) cls += ' active-focus';
+    if(r.type==='chuanwei') cls += ' chuanwei';
+    if(r.status==='approved') cls += ' status-approved';
+    if(r.status==='rejected') cls += ' status-rejected';
+    html += '<div class="' + cls + '" id="rc-' + r.id + '" onclick="setActiveReviewCard(\'' + r.id + '\')">';
+    html += '<input type="checkbox" onclick="event.stopPropagation();toggleReviewSelect(\'' + r.id + '\')" ' + (state.reviewSelected[r.id]?'checked':'') + '>';
+    html += '<div class="rc-body">';
+    html += '<div class="rc-tags">' + polarityBadge(r.polarity) + typeBadge(r.type) + statusBadge(r.status) + '<span class="muted" style="font-size:11px;">' + PLATFORM_NAMES[r.platform] + ' · ' + esc(r.author) + ' · ' + r.time + '</span></div>';
+    html += '<div class="rc-text">' + esc(r.text) + '</div>';
+    html += '<div class="rc-conf"><span class="muted" style="font-size:11px;">置信度</span><div class="progress-track"><div class="progress-fill" style="width:' + Math.round(r.confidence*100) + '%;background:' + confColor(r.confidence) + ';"></div></div><span style="font-size:11px;font-weight:700;">' + r.confidence.toFixed(2) + '</span></div>';
+    html += '<div class="rc-actions">';
+    html += '<button class="btn btn-green btn-sm" onclick="event.stopPropagation();approveReview(\'' + r.id + '\')">✓ 通过</button>';
+    html += '<button class="btn btn-danger btn-sm" onclick="event.stopPropagation();rejectReview(\'' + r.id + '\')">✕ 拒绝</button>';
+    html += '<button class="btn btn-sm" onclick="event.stopPropagation();labelReview(\'' + r.id + '\',\'irony\')">标反讽</button>';
+    html += '<button class="btn btn-sm" onclick="event.stopPropagation();labelReview(\'' + r.id + '\',\'shuijun\')">标水军</button>';
+    html += '<button class="btn btn-sm" onclick="event.stopPropagation();labelReview(\'' + r.id + '\',\'chuanwei\')">标串味</button>';
+    html += '</div></div></div>';
+  }
+  $('#reviewCardList').innerHTML = html || '<div class="empty-hint">没有符合筛选条件的内容</div>';
+  updateSelectedCount();
+}
+function setActiveReviewCard(id){
+  state.activeReviewId = id;
+  $all('.review-card').forEach(function(el){ el.classList.remove('active-focus'); });
+  var el = $('#rc-' + id);
+  if(el) el.classList.add('active-focus');
+}
+function toggleReviewSelect(id){
+  state.reviewSelected[id] = !state.reviewSelected[id];
+  updateSelectedCount();
+}
+function updateSelectedCount(){
+  var n = 0;
+  for(var k in state.reviewSelected){ if(state.reviewSelected[k]) n++; }
+  $('#selectedCount').textContent = n;
+}
+function toggleSelectAll(checked){
+  var items = filteredReviewItems();
+  for(var i=0;i<items.length;i++){ state.reviewSelected[items[i].id] = checked; }
+  renderReviewList();
+}
+function batchApprove(){
+  var n = 0;
+  for(var k in state.reviewSelected){
+    if(state.reviewSelected[k]){ setReviewStatus(k, 'approved'); n++; state.reviewSelected[k]=false; }
+  }
+  if(n===0){ showToast('请先勾选要批量处理的内容', 'red'); return; }
+  showToast('已批量通过 ' + n + ' 条内容', 'green');
+  renderReviewList();
+  refreshReviewBadges();
+}
+function batchReject(){
+  var n = 0;
+  for(var k in state.reviewSelected){
+    if(state.reviewSelected[k]){ setReviewStatus(k, 'rejected'); n++; state.reviewSelected[k]=false; }
+  }
+  if(n===0){ showToast('请先勾选要批量处理的内容', 'red'); return; }
+  showToast('已批量拒绝 ' + n + ' 条内容', 'green');
+  renderReviewList();
+  refreshReviewBadges();
+}
+function setReviewStatus(id, status){
+  for(var i=0;i<REVIEW_QUEUE.length;i++){ if(REVIEW_QUEUE[i].id===id){ REVIEW_QUEUE[i].status = status; break; } }
+}
+function approveReview(id){ setReviewStatus(id, 'approved'); showToast('已通过 ' + id, 'green'); renderReviewList(); refreshReviewBadges(); }
+function rejectReview(id){ setReviewStatus(id, 'rejected'); showToast('已拒绝 ' + id, 'green'); renderReviewList(); refreshReviewBadges(); }
+function labelReview(id, type){
+  for(var i=0;i<REVIEW_QUEUE.length;i++){
+    if(REVIEW_QUEUE[i].id===id){ REVIEW_QUEUE[i].type = type; break; }
+  }
+  showToast('已标记为「' + (type==='irony'?'反讽':type==='shuijun'?'水军':'串味') + '」', 'green');
+  renderReviewList();
+  renderChuanweiPanel();
+}
+function refreshReviewBadges(){
+  renderNav();
+  $('#quickReviewCount').textContent = pendingReviewCount();
+  var q2 = $('#quickReviewCount2'); if(q2) q2.textContent = pendingReviewCount();
+}
+function handleReviewShortcut(e){
+  if(state.activeView!=='review') return;
+  if(!state.activeReviewId) return;
+  var tag = (e.target.tagName||'').toLowerCase();
+  if(tag==='input' || tag==='textarea') return;
+  var id = state.activeReviewId;
+  if(e.key==='1'){ for(var i=0;i<REVIEW_QUEUE.length;i++){ if(REVIEW_QUEUE[i].id===id) REVIEW_QUEUE[i].polarity='pos'; } renderReviewList(); }
+  else if(e.key==='2'){ for(i=0;i<REVIEW_QUEUE.length;i++){ if(REVIEW_QUEUE[i].id===id) REVIEW_QUEUE[i].polarity='neu'; } renderReviewList(); }
+  else if(e.key==='3'){ for(i=0;i<REVIEW_QUEUE.length;i++){ if(REVIEW_QUEUE[i].id===id) REVIEW_QUEUE[i].polarity='neg'; } renderReviewList(); }
+  else if(e.key==='i'){ labelReview(id,'irony'); }
+  else if(e.key==='s'){ labelReview(id,'shuijun'); }
+  else if(e.key==='r'){ labelReview(id,'chuanwei'); }
+  else if(e.key==='Enter'){ approveReview(id); }
+  else if(e.key==='Escape'){ state.activeReviewId=null; $all('.review-card').forEach(function(el){ el.classList.remove('active-focus'); }); }
+}
+function handleReviewKBSearch(){
+  var kw = $('#reviewKBSearch').value.trim();
+  var box = $('#reviewKBResults');
+  if(kw.length<1){ box.innerHTML = ''; return; }
+  var items = KNOWLEDGE.filter(function(k){ return k.title.indexOf(kw)!==-1 || k.content.indexOf(kw)!==-1; }).slice(0,4);
+  if(!items.length){ box.innerHTML = '<div class="empty-hint">未找到相关知识库内容</div>'; return; }
+  var html = '';
+  for(var i=0;i<items.length;i++){
+    var k = items[i];
+    html += '<div class="kb-card" style="margin-bottom:6px;" onclick="switchView(\'knowledge\');toggleKBExpand(\'' + k.id + '\')">';
+    html += '<div class="kb-card-head"><span class="kb-card-title">' + highlightText(k.title, kw) + '</span><span class="badge badge-outline">' + k.category + '</span></div>';
+    html += '</div>';
+  }
+  box.innerHTML = html;
+}
+
+/* ===================== 4. 情绪分析 ===================== */
+function renderAnalysisPeriodPills(){
+  var periods = [{id:'week', label:'近 7 天'}, {id:'month', label:'近 30 天'}, {id:'quarter', label:'本季度'}];
+  var html = '';
+  for(var i=0;i<periods.length;i++){
+    html += '<button class="tab-pill' + (periods[i].id===state.analysisPeriod?' active':'') + '" onclick="setAnalysisPeriod(\'' + periods[i].id + '\')">' + periods[i].label + '</button>';
+  }
+  $('#analysisPeriodPills').innerHTML = html;
+}
+function setAnalysisPeriod(p){
+  state.analysisPeriod = p;
+  renderAnalysisView();
+}
+function renderAnalysisView(){
+  renderAnalysisPeriodPills();
+  var data = ABSA_DATA[state.analysisPeriod];
+  var dims = data.map(function(d){ return d.dim; });
+  var series = data.map(function(d){ return d.net; });
+  $('#radarChart').innerHTML = buildRadarChart(dims, series);
+  var wc = '';
+  for(var i=0;i<WORDCLOUD.length;i++){
+    var scale = 12 + (WORDCLOUD[i].count/WORDCLOUD[0].count)*10;
+    wc += '<span style="font-size:' + scale + 'px;">' + WORDCLOUD[i].word + ' <small style="opacity:.6;font-size:11px;">' + WORDCLOUD[i].count + '</small></span>';
+  }
+  $('#wordcloud').innerHTML = wc;
+  var rows = '';
+  for(i=0;i<data.length;i++){
+    var d = data[i];
+    rows += '<tr><td><b>' + d.dim + '</b></td><td>' + d.pos + '</td><td>' + d.neg + '</td>';
+    rows += '<td style="color:' + (d.net>=0?'var(--green)':'var(--red)') + ';font-weight:700;">' + (d.net>=0?'+':'') + d.net.toFixed(2) + '</td>';
+    rows += '<td class="muted">' + esc(d.quote) + '</td></tr>';
+  }
+  $('#absaTableBody').innerHTML = rows;
+}
+
+/* ===================== 5. 预警中心 ===================== */
+var ALERT_COLS = [
+  {status:'pending', label:'待处置'},
+  {status:'processing', label:'处理中'},
+  {status:'confirm', label:'待确认'},
+  {status:'archived', label:'已归档'}
+];
+function alertCountdownText(a){
+  if(a.status==='archived') return '已归档';
+  var mins = a.deadlineMin;
+  if(mins<=0) return '已到期';
+  var h = Math.floor(mins/60), m = mins%60;
+  return '剩余 ' + (h>0?h+'h':'') + m + 'm';
+}
+function alertCardHTML(a){
+  var blink = (a.level==='P0' && a.status!=='archived') ? ' blink' : '';
+  var html = '<div class="alert-card' + (a.level==='P0'?' level-p0':'') + '" draggable="true" ondragstart="dragStart(event,\'' + a.id + '\')" onclick="openAlertDrawer(\'' + a.id + '\')">';
+  html += '<div class="a-meta">' + levelBadge(a.level) + '<span class="countdown' + blink + '">⏱ ' + alertCountdownText(a) + '</span></div>';
+  html += '<div class="a-title">' + esc(a.title) + '</div>';
+  html += '<div class="a-meta">' + userChip(a.assigneeId) + '<span>· ' + PLATFORM_NAMES[a.platform] + '</span><span>· 相关 ' + a.relatedCount + ' 条</span></div>';
+  html += '</div>';
+  return html;
+}
+function renderAlertsKanban(){
+  var html = '';
+  for(var i=0;i<ALERT_COLS.length;i++){
+    var col = ALERT_COLS[i];
+    var items = ALERTS.filter(function(a){ return a.status===col.status; });
+    html += '<div class="kanban-col" id="kcol-' + col.status + '" ondragover="allowDrop(event)" ondrop="dropCard(event,\'' + col.status + '\')" ondragenter="dragEnterCol(event)" ondragleave="dragLeaveCol(event)">';
+    html += '<div class="kanban-col-title"><span>' + col.label + '</span><span class="badge badge-gray">' + items.length + '</span></div>';
+    for(var j=0;j<items.length;j++){ html += alertCardHTML(items[j]); }
+    if(!items.length) html += '<div class="empty-hint">暂无</div>';
+    html += '</div>';
+  }
+  $('#alertsKanban').innerHTML = html;
+}
+var dragAlertId = null;
+function dragStart(e, id){ dragAlertId = id; e.dataTransfer.setData('text/plain', id); }
+function allowDrop(e){ e.preventDefault(); }
+function dragEnterCol(e){ e.currentTarget.classList.add('drag-over'); }
+function dragLeaveCol(e){ e.currentTarget.classList.remove('drag-over'); }
+function dropCard(e, status){
+  e.preventDefault();
+  e.currentTarget.classList.remove('drag-over');
+  var id = dragAlertId || e.dataTransfer.getData('text/plain');
+  if(!id) return;
+  setAlertStatus(id, status);
+}
+function setAlertStatus(id, status){
+  for(var i=0;i<ALERTS.length;i++){
+    if(ALERTS[i].id===id){
+      ALERTS[i].status = status;
+      ALERTS[i].timeline.push({time:'刚刚', text:'状态流转为「' + (ALERT_COLS.filter(function(c){return c.status===status;})[0]||{}).label + '」'});
+      break;
+    }
+  }
+  renderAlertsKanban();
+  renderNav();
+  showToast('预警状态已更新', 'green');
+  if($('#drawerTitle') && $('#drawerOverlay').classList.contains('hidden')===false && state.currentDrawerAlertId===id){
+    openAlertDrawer(id);
+  }
+}
+function openAlertDrawer(id){
+  var a = null;
+  for(var i=0;i<ALERTS.length;i++){ if(ALERTS[i].id===id){ a=ALERTS[i]; break; } }
+  if(!a) return;
+  state.currentDrawerAlertId = id;
+  var html = '<div style="display:flex;gap:8px;margin-bottom:10px;">' + levelBadge(a.level) + statusBadgeAlert(a.status) + '</div>';
+  html += '<div style="font-size:14px;font-weight:700;line-height:1.6;margin-bottom:10px;">' + esc(a.title) + '</div>';
+  html += '<div class="muted" style="font-size:12px;margin-bottom:14px;">平台：' + PLATFORM_NAMES[a.platform] + ' · 触发于 ' + a.triggerTime + ' · 相关内容 ' + a.relatedCount + ' 条 · 处置责任人 ' + userChip(a.assigneeId) + '</div>';
+
+  html += '<div class="panel-title" style="font-size:12.8px;">处置时间线</div><div class="timeline">';
+  for(i=0;i<a.timeline.length;i++){
+    html += '<div class="timeline-item"><div class="t-time">' + a.timeline[i].time + '</div><div class="t-text">' + esc(a.timeline[i].text) + '</div></div>';
+  }
+  html += '</div>';
+
+  html += '<div class="panel-title" style="font-size:12.8px;margin-top:14px;">原始源帖</div>';
+  for(i=0;i<a.sourcePosts.length;i++){
+    var sp = a.sourcePosts[i];
+    html += '<div class="card" style="padding:10px 12px;margin-bottom:8px;"><div class="muted" style="font-size:11px;margin-bottom:4px;">' + sp.platform + ' · ' + esc(sp.author) + ' · ' + sp.time + '</div><div style="font-size:12.8px;">' + esc(sp.text) + '</div></div>';
+  }
+
+  html += '<div class="panel-title" style="font-size:12.8px;margin-top:14px;">应对口径</div>';
+  if(a.responseDraft){
+    html += '<div class="card" style="padding:12px;background:var(--blue-bg);border-color:#a5d8ff;font-size:12.8px;line-height:1.8;margin-bottom:10px;">' + esc(a.responseDraft) + '</div>';
+    if(a.status==='confirm'){
+      html += '<button class="btn btn-primary btn-block" style="margin-bottom:8px;" onclick="confirmResponseDraft(\'' + a.id + '\')">✓ 确认口径并归档至知识库</button>';
+    }
+  } else {
+    html += '<div class="empty-hint" style="margin-bottom:10px;">尚未生成应对口径</div>';
+    html += '<button class="btn btn-primary btn-block" style="margin-bottom:8px;" onclick="generateResponseDraft(\'' + a.id + '\')">✨ 生成应对口径（AI 辅助）</button>';
+  }
+
+  html += '<div class="panel-title" style="font-size:12.8px;margin-top:14px;">状态流转</div>';
+  html += '<div class="chip-row">';
+  for(i=0;i<ALERT_COLS.length;i++){
+    var col = ALERT_COLS[i];
+    html += '<button class="btn btn-sm' + (a.status===col.status?' btn-primary':'') + '" onclick="setAlertStatus(\'' + a.id + '\',\'' + col.status + '\')">' + col.label + '</button>';
+  }
+  html += '</div>';
+  html += '<button class="btn btn-danger btn-block" style="margin-top:14px;" onclick="markFalsePositive(\'' + a.id + '\')">⚠ 标记为误报（自动归入串味词库）</button>';
+
+  openDrawer(a.id + ' 处置详情', html);
+}
+function generateResponseDraft(id){
+  var a = null;
+  for(var i=0;i<ALERTS.length;i++){ if(ALERTS[i].id===id){ a=ALERTS[i]; break; } }
+  if(!a) return;
+  var tmpl = RESPONSE_TEMPLATES[a.category] || RESPONSE_TEMPLATES['默认'];
+  a.responseDraft = tmpl;
+  a.status = 'confirm';
+  a.timeline.push({time:'刚刚', text:'AI 已生成应对口径草稿，等待确认'});
+  showToast('应对口径已生成，请确认', 'green');
+  renderAlertsKanban();
+  openAlertDrawer(id);
+}
+function confirmResponseDraft(id){
+  var a = null;
+  for(var i=0;i<ALERTS.length;i++){ if(ALERTS[i].id===id){ a=ALERTS[i]; break; } }
+  if(!a) return;
+  a.status = 'archived';
+  a.timeline.push({time:'刚刚', text:'口径已确认，归档至知识库并结束处置'});
+  KNOWLEDGE.unshift({id:'K' + (100+KNOWLEDGE.length), category:'口径', subcategory:'', title:a.category + '应对口径（来自 ' + a.id + '）', content:a.responseDraft, refCount:1, updatedAt:'刚刚', status:'正常'});
+  showToast('口径已确认并沉淀至知识库', 'green');
+  renderAlertsKanban();
+  closeDrawer();
+}
+function markFalsePositive(id){
+  var a = null;
+  for(var i=0;i<ALERTS.length;i++){ if(ALERTS[i].id===id){ a=ALERTS[i]; break; } }
+  if(!a) return;
+  a.status = 'archived';
+  a.timeline.push({time:'刚刚', text:'已标记为误报，相关关键词已加入串味词库'});
+  KNOWLEDGE.unshift({id:'K' + (100+KNOWLEDGE.length), category:'串味', subcategory:'', title:'串味词库：' + a.id + ' 误报关联词', content:'预警「' + a.title + '」经核实为误报，相关触发词已加入排除清单，后续不再计入舆情统计。', refCount:1, updatedAt:'刚刚', status:'正常'});
+  showToast('已标记误报并归入串味词库', 'green');
+  renderAlertsKanban();
+  renderFalsePositiveList();
+  closeDrawer();
+}
+function renderFalsePositiveList(){
+  var items = KNOWLEDGE.filter(function(k){ return k.category==='串味' && k.title.indexOf('误报')!==-1; });
+  if(!items.length){ $('#falsePositiveList').innerHTML = '<div class="empty-hint">暂无误报标记记录</div>'; return; }
+  var html = '';
+  for(var i=0;i<items.length;i++){
+    var k = items[i];
+    html += '<div class="card" style="padding:10px 12px;margin-bottom:8px;"><b style="font-size:12.8px;">' + esc(k.title) + '</b><div class="muted" style="font-size:11.5px;margin-top:4px;">' + esc(k.content) + '</div></div>';
+  }
+  $('#falsePositiveList').innerHTML = html;
+}
+function renderCooldownList(){
+  var html = '';
+  for(var i=0;i<COOLDOWN_EVENTS.length;i++){
+    var c = COOLDOWN_EVENTS[i];
+    html += '<div class="card" style="padding:10px 12px;margin-bottom:8px;cursor:pointer;" onclick="toggleCooldownDetail(\'' + c.id + '\')">';
+    html += '<div style="display:flex;justify-content:space-between;"><b style="font-size:12.8px;">' + esc(c.title) + '</b><span class="badge badge-gray">' + c.closedAt + '</span></div>';
+    html += '<div id="cd-detail-' + c.id + '" class="muted" style="font-size:11.5px;margin-top:6px;display:none;">' + esc(c.resolution) + '</div>';
+    html += '</div>';
+  }
+  $('#cooldownList').innerHTML = html;
+}
+function toggleCooldownDetail(id){
+  var el = $('#cd-detail-' + id);
+  if(el) el.style.display = el.style.display==='none' ? 'block' : 'none';
+}
+
+/* ===================== 6. 报告中心 ===================== */
+function renderReportsTab(){
+  var tabs = [{id:'weekly', label:'周报'}, {id:'daily', label:'日报'}, {id:'qa', label:'AI 问答'}];
+  var html = '';
+  for(var i=0;i<tabs.length;i++){
+    html += '<button class="tab-pill' + (tabs[i].id===state.reportsTab?' active':'') + '" onclick="setReportsTab(\'' + tabs[i].id + '\')">' + tabs[i].label + '</button>';
+  }
+  $('#reportsTabPills').innerHTML = html;
+  $('#reportsTabWeekly').style.display = state.reportsTab==='weekly' ? 'block' : 'none';
+  $('#reportsTabDaily').style.display = state.reportsTab==='daily' ? 'block' : 'none';
+  $('#reportsTabQA').style.display = state.reportsTab==='qa' ? 'block' : 'none';
+  if(state.reportsTab==='weekly'){ renderReportHistory(); renderReportPreview(); renderBacklogTable(); }
+  if(state.reportsTab==='daily'){ renderBossDaily(); }
+  if(state.reportsTab==='qa'){ renderQAHistory(); }
+}
+function setReportsTab(id){ state.reportsTab = id; renderReportsTab(); }
+function renderReportHistory(){
+  var html = '';
+  for(var i=0;i<REPORTS.length;i++){
+    var r = REPORTS[i];
+    html += '<div class="card" style="padding:10px 12px;margin-bottom:8px;cursor:pointer;' + (r.id===state.activeReportId?'border-color:var(--accent);':'') + '" onclick="selectReport(\'' + r.id + '\')">';
+    html += '<div style="display:flex;justify-content:space-between;align-items:center;"><b style="font-size:12.8px;">' + r.period + '</b>' + reportStatusBadge(r.status) + '</div>';
+    html += '<div class="muted" style="font-size:11px;margin-top:4px;">撰写人 ' + r.author + ' · 审核人 ' + r.reviewer + '</div>';
+    html += '</div>';
+  }
+  $('#reportHistoryList').innerHTML = html;
+}
+function selectReport(id){ state.activeReportId = id; renderReportHistory(); renderReportPreview(); }
+function reportById(id){
+  for(var i=0;i<REPORTS.length;i++){ if(REPORTS[i].id===id) return REPORTS[i]; }
+  return null;
+}
+function renderReportPreview(){
+  var r = reportById(state.activeReportId);
+  if(!r){ $('#reportPreviewBody').innerHTML = '<div class="empty-hint">请选择一份报告</div>'; return; }
+  $('#reportPreviewTitle').innerHTML = r.period + ' 周报预览 ' + reportStatusBadge(r.status);
+  var html = '';
+  for(var i=0;i<r.content.length;i++){
+    var c = r.content[i];
+    html += '<p>' + esc(c.text) + ' <span class="cite-badge" onclick="showSourceDoc(\'' + c.cite + '\')">来源 ' + c.cite + '</span></p>';
+  }
+  html += '<div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border);">';
+  if(r.status==='draft'){
+    html += '<button class="btn btn-primary" onclick="reportSubmit(\'' + r.id + '\')">提交总监审核</button>';
+  } else if(r.status==='pending'){
+    html += '<div class="muted" style="font-size:12px;margin-bottom:8px;">提交于 ' + r.submittedAt + '，等待 ' + r.reviewer + ' 审核确认</div>';
+    html += '<button class="btn btn-primary" onclick="reportApprove(\'' + r.id + '\')">✓ 审核通过并推送飞书</button> ';
+    html += '<button class="btn btn-danger" onclick="reportReject(\'' + r.id + '\')">打回草稿</button>';
+  } else {
+    html += '<div class="muted" style="font-size:12px;">审核人：' + r.reviewer + ' · 审核意见：' + esc(r.reviewNote) + '</div>';
+    html += '<div class="muted" style="font-size:12px;margin-top:4px;">已于 ' + r.pushedAt + ' 推送飞书群</div>';
+  }
+  html += '</div>';
+  $('#reportPreviewBody').innerHTML = html;
+}
+function reportSubmit(id){
+  var r = reportById(id); if(!r) return;
+  r.status = 'pending'; r.submittedAt = '刚刚';
+  showToast('已提交总监审核', 'green');
+  renderReportHistory(); renderReportPreview();
+}
+function reportApprove(id){
+  var r = reportById(id); if(!r) return;
+  r.status = 'published'; r.reviewedAt = '刚刚'; r.pushedAt = '刚刚'; r.reviewNote = '内容核实充分，同意发布。';
+  showToast('审核通过，已推送飞书群', 'green');
+  renderReportHistory(); renderReportPreview();
+}
+function reportReject(id){
+  var r = reportById(id); if(!r) return;
+  r.status = 'draft'; r.reviewNote = '需补充数据来源，请修改后重新提交。';
+  showToast('已打回草稿', 'red');
+  renderReportHistory(); renderReportPreview();
+}
+function showSourceDoc(docId){
+  var d = SOURCE_DOCS[docId];
+  if(!d) return;
+  var html = '<div class="muted" style="font-size:11.5px;margin-bottom:10px;">引用编号：' + docId + '</div>';
+  html += '<div style="font-size:12.8px;line-height:1.8;">' + esc(d.excerpt) + '</div>';
+  openDrawer(d.title, html);
+}
+function renderBacklogTable(){
+  var html = '';
+  for(var i=0;i<BACKLOG.length;i++){
+    var b = BACKLOG[i];
+    html += '<tr><td><b>' + b.demand + '</b></td><td>' + b.platform + '</td><td>' + b.count + '</td><td>' + (b.sentiment==='负面'?'<span class="badge badge-red">负面</span>':b.sentiment==='正面'?'<span class="badge badge-green">正面</span>':'<span class="badge badge-gray">中性</span>') + '</td><td><span class="badge badge-outline">' + b.roadmap + '</span></td></tr>';
+  }
+  $('#backlogTableBody').innerHTML = html;
+}
+function renderBossDaily(){
+  var html = '';
+  for(var i=0;i<BOSS_DAILY.length;i++){
+    var b = BOSS_DAILY[i];
+    html += '<div class="card" style="padding:10px 12px;margin-bottom:8px;"><b style="font-size:12px;color:var(--text-secondary);">' + b.date + '</b><div style="font-size:12.8px;margin-top:4px;">' + esc(b.text) + '</div></div>';
+  }
+  $('#bossDailyList').innerHTML = html;
+}
+function triggerBossDaily(){
+  BOSS_DAILY.unshift({date:'刚刚', text:'今日舆情：手动触发生成，1 个 P0 预警处理中，整体声量较昨日上升 8.2%。'});
+  showToast('日报已生成并推送飞书群', 'green');
+  renderBossDaily();
+}
+var QA_RULES = [
+  {kw:['发热','散热'], answer:'发热相关反馈本周共 186 条，主要集中在微博与抖音，负面占比 71%，代表性原文引用见「D-104」。官方已计划本周内推送系统级散热优化补丁。'},
+  {kw:['退款','售后'], answer:'售后服务维度净情绪分为六维中唯一负值（-0.44），退款平均处理时长 9.2 天，超出承诺时效 3-5 工作日，主因客服排班不足，详见「D-103」。'},
+  {kw:['价格','涨价'], answer:'价格争议声量环比上升 40%，核实为大促结束后的常规价格回调，非临时涨价，官方已给出统一说明口径，详见「D-102」。'},
+  {kw:['竞品','kinhank','KINHANK'], answer:'竞品 KINHANK 当前 SOV 声量占比 42%，游戏兼容维度表现优于我方，但售后与价格维度整体弱于 Youdoo Box。'},
+  {kw:['BHI','健康指数'], answer:'品牌健康指数 BHI 近 7 天呈下降趋势，从 71 降至 58，主要受「疑似自燃」话题与售后时效争议叠加影响，详见总览工作台趋势图。'},
+  {kw:['预警','P0','P1'], answer:'当前进行中预警共 4 个（2 个 P0，2 个 P1），其中 AL-0091「疑似自燃」话题为最高优先级，已由张舆情认领处置，详见预警中心。'},
+  {kw:['串味','误报'], answer:'当前串味词库共收录 5 条排除规则，主要涉及「优度日化」「金汉克建材」等无关企业名称，命中后将自动过滤不计入统计。'},
+  {kw:['兼容','兼容性'], answer:'游戏兼容维度净情绪分持续保持全六维最高（0.61），是当前口碑最稳固的优势维度，主流大作兼容性反馈普遍正面。'}
+];
+function sendAIQuestion(){
+  var input = $('#qaInput');
+  var q = input.value.trim();
+  if(!q) return;
+  state.qaHistory.push({role:'question', text:q});
+  var answer = '暂未匹配到相关数据，建议前往情绪分析或报告中心查看详细数据。';
+  for(var i=0;i<QA_RULES.length;i++){
+    for(var j=0;j<QA_RULES[i].kw.length;j++){
+      if(q.indexOf(QA_RULES[i].kw[j])!==-1){ answer = QA_RULES[i].answer; break; }
+    }
+  }
+  state.qaHistory.push({role:'answer', text:answer});
+  input.value = '';
+  renderQAHistory();
+}
+function renderQAHistory(){
+  var html = '';
+  for(var i=0;i<state.qaHistory.length;i++){
+    var q = state.qaHistory[i];
+    html += '<div class="qa-bubble' + (q.role==='question'?' qa-question':'') + '"><div class="qa-role">' + (q.role==='question'?'我':'AI 助手') + '</div><div style="font-size:12.8px;">' + esc(q.text) + '</div></div>';
+  }
+  $('#qaHistory').innerHTML = html || '<div class="empty-hint">输入问题开始对话，例如“发热问题在哪些平台反馈最多？”</div>';
+  var box = $('#qaHistory'); box.scrollTop = box.scrollHeight;
+}
+function focusAIQA(){
+  state.reportsTab = 'qa';
+  renderReportsTab();
+  setTimeout(function(){ var el = $('#qaInput'); if(el) el.focus(); }, 60);
+}
+function quickGenerateReport(){
+  showToast('周报草稿生成中，已跳转至报告中心', 'green');
+  switchView('reports');
+}
+
+/* ===================== 7. 竞品监控 ===================== */
+function renderCompetitorView(){
+  var html = '';
+  for(var i=0;i<SOV.length;i++){
+    var s = SOV[i];
+    html += '<div class="sov-row"><div class="sov-label">' + s.brand + '</div><div class="sov-bar-bg"><div class="sov-bar-fill" style="width:' + s.pct + '%;background:' + s.color + ';">' + s.pct + '%</div></div><div class="sov-num">' + s.pct + '%</div></div>';
+  }
+  $('#sovChart').innerHTML = html;
+
+  var rows = '';
+  for(i=0;i<COMPETITOR_ABSA.length;i++){
+    var c = COMPETITOR_ABSA[i];
+    rows += '<tr><td><b>' + c.dim + '</b></td><td><span style="color:var(--green);">' + c.youdooPos + '</span> / <span style="color:var(--red);">' + c.youdooNeg + '</span></td><td><span style="color:var(--green);">' + c.kinhankPos + '</span> / <span style="color:var(--red);">' + c.kinhankNeg + '</span></td></tr>';
+  }
+  $('#competitorTableBody').innerHTML = rows;
+
+  var feedHtml = '';
+  for(i=0;i<KINHANK_FEED.length;i++){
+    var f = KINHANK_FEED[i];
+    feedHtml += '<div class="activity-item"><span class="activity-dot" style="background:#862e9c;"></span><span class="activity-time">' + f.time + '</span><span>' + esc(f.text) + '</span></div>';
+  }
+  $('#kinhankFeed').innerHTML = feedHtml;
+
+  var tlHtml = '';
+  for(i=0;i<DUAL_TIMELINE.length;i++){
+    var d = DUAL_TIMELINE[i];
+    tlHtml += '<div class="dt-item brand-' + d.brand + '"><div class="dt-date">' + d.date + ' · ' + (d.brand==='youdoo'?'Youdoo Box':'KINHANK') + '</div><div style="font-size:12.8px;margin-top:2px;">' + esc(d.text) + '</div></div>';
+  }
+  $('#dualTimeline').innerHTML = tlHtml;
+}
+
+/* ===================== 8. 系统配置 ===================== */
+function renderConfigView(){ renderEntityConfig(); renderPlatformSchedule(); renderLLMConfig(); renderBudgetPanel(); renderFeishuPanel(); }
+function renderEntityConfig(){
+  var html = '';
+  for(var i=0;i<ENTITIES.length;i++){
+    var e = ENTITIES[i];
+    html += '<div class="section-gap"><b style="font-size:12.8px;">' + e.name + '</b>';
+    html += '<div style="margin:8px 0;"><span class="muted" style="font-size:11.5px;">别名</span><div class="chip-row" style="margin-top:6px;">';
+    for(var j=0;j<e.aliases.length;j++){ html += '<span class="chip">' + e.aliases[j] + '<span class="chip-x" onclick="removeChip(\'' + e.id + '\',\'aliases\',' + j + ')">×</span></span>'; }
+    html += '<button class="chip-add" onclick="addChip(\'' + e.id + '\',\'aliases\')">+ 添加</button></div></div>';
+    html += '<div style="margin:8px 0;"><span class="muted" style="font-size:11.5px;">串味排除词</span><div class="chip-row" style="margin-top:6px;">';
+    for(j=0;j<e.mustNot.length;j++){ html += '<span class="chip chip-amber">' + e.mustNot[j] + '<span class="chip-x" onclick="removeChip(\'' + e.id + '\',\'mustNot\',' + j + ')">×</span></span>'; }
+    html += '<button class="chip-add" onclick="addChip(\'' + e.id + '\',\'mustNot\')">+ 添加</button></div></div>';
+    html += '<div><span class="muted" style="font-size:11.5px;">危机加权词</span><div class="chip-row" style="margin-top:6px;">';
+    for(j=0;j<e.crisisBoost.length;j++){ html += '<span class="chip chip-red">' + e.crisisBoost[j] + '<span class="chip-x" onclick="removeChip(\'' + e.id + '\',\'crisisBoost\',' + j + ')">×</span></span>'; }
+    html += '<button class="chip-add" onclick="addChip(\'' + e.id + '\',\'crisisBoost\')">+ 添加</button></div></div></div>';
+  }
+  $('#entityConfigList').innerHTML = html;
+}
+function entityById(id){
+  for(var i=0;i<ENTITIES.length;i++){ if(ENTITIES[i].id===id) return ENTITIES[i]; }
+  return null;
+}
+function removeChip(entityId, field, idx){
+  var e = entityById(entityId); if(!e) return;
+  e[field].splice(idx,1);
+  renderEntityConfig();
+  showToast('已移除', 'green');
+}
+function addChip(entityId, field){
+  var e = entityById(entityId); if(!e) return;
+  var val = prompt('请输入要添加的词条：');
+  if(!val) return;
+  e[field].push(val);
+  renderEntityConfig();
+  showToast('已添加「' + val + '」', 'green');
+}
+function renderPlatformSchedule(){
+  var html = '';
+  for(var i=0;i<PLATFORM_SCHEDULE.length;i++){
+    var p = PLATFORM_SCHEDULE[i];
+    html += '<tr><td><b>' + p.name + '</b></td>';
+    html += '<td><label class="switch"><input type="checkbox" ' + (p.enabled?'checked':'') + ' onchange="togglePlatformSchedule(\'' + p.id + '\')"><span class="slider-track"></span></label></td>';
+    html += '<td><select onchange="updateSchedule(\'' + p.id + '\', this.value)"><option' + (p.cron==='每 30 分钟'?' selected':'') + '>每 30 分钟</option><option' + (p.cron==='每 1 小时'?' selected':'') + '>每 1 小时</option><option' + (p.cron==='每 2 小时'?' selected':'') + '>每 2 小时</option><option' + (p.cron==='每 4 小时'?' selected':'') + '>每 4 小时</option><option' + (p.cron==='每 6 小时'?' selected':'') + '>每 6 小时</option></select></td></tr>';
+  }
+  $('#platformScheduleBody').innerHTML = html;
+}
+function togglePlatformSchedule(id){
+  for(var i=0;i<PLATFORM_SCHEDULE.length;i++){ if(PLATFORM_SCHEDULE[i].id===id){ PLATFORM_SCHEDULE[i].enabled = !PLATFORM_SCHEDULE[i].enabled; showToast(PLATFORM_SCHEDULE[i].name + (PLATFORM_SCHEDULE[i].enabled?' 已启用':' 已停用'), 'green'); break; } }
+}
+function updateSchedule(id, val){
+  for(var i=0;i<PLATFORM_SCHEDULE.length;i++){ if(PLATFORM_SCHEDULE[i].id===id){ PLATFORM_SCHEDULE[i].cron = val; showToast(PLATFORM_SCHEDULE[i].name + ' 调度频率已更新为 ' + val, 'green'); break; } }
+}
+function renderLLMConfig(){
+  var html = '<table class="data-table"><tbody>';
+  html += '<tr><td class="muted">模型</td><td><b>' + LLM_CONFIG.model + '</b></td></tr>';
+  html += '<tr><td class="muted">Temperature</td><td><b>' + LLM_CONFIG.temperature + '</b></td></tr>';
+  html += '<tr><td class="muted">最大 Token</td><td><b>' + LLM_CONFIG.maxTokens + '</b></td></tr>';
+  html += '<tr><td class="muted">Prompt 版本</td><td><b>' + LLM_CONFIG.promptVersion + '</b></td></tr>';
+  html += '</tbody></table><button class="btn btn-sm" style="margin-top:10px;" onclick="showToast(\'配置已保存\',\'green\')">保存配置</button>';
+  $('#llmConfigPanel').innerHTML = html;
+}
+function renderBudgetPanel(){
+  var pct = Math.round(BUDGET.used/BUDGET.total*100);
+  var html = '<div style="display:flex;justify-content:space-between;font-size:12.8px;margin-bottom:8px;"><span>已用 ' + BUDGET.used + ' ' + BUDGET.unit + '</span><span>总额 ' + BUDGET.total + ' ' + BUDGET.unit + '</span></div>';
+  html += '<div class="progress-track" style="height:10px;"><div class="progress-fill" style="width:' + pct + '%;background:' + (pct>80?'var(--red)':pct>60?'var(--amber)':'var(--accent)') + ';"></div></div>';
+  html += '<div class="muted" style="font-size:11.5px;margin-top:6px;">已使用 ' + pct + '%</div>';
+  $('#budgetPanel').innerHTML = html;
+}
+function renderFeishuPanel(){
+  var html = '<div style="margin-bottom:10px;"><span class="muted" style="font-size:11.5px;">Webhook 地址</span><div style="font-size:12px;font-family:monospace;background:var(--bg-elevated);padding:8px 10px;border-radius:6px;margin-top:4px;word-break:break-all;">' + FEISHU.webhook + '</div></div>';
+  html += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;"><label class="switch"><input type="checkbox" ' + (FEISHU.enabled?'checked':'') + ' onchange="FEISHU.enabled=!FEISHU.enabled;showToast(FEISHU.enabled?\'已启用飞书推送\':\'已停用飞书推送\',\'green\')"><span class="slider-track"></span></label><span style="font-size:12.5px;">启用飞书推送</span></div>';
+  html += '<div class="muted" style="font-size:11.5px;margin-bottom:10px;">上次推送：' + FEISHU.lastPush + '</div>';
+  html += '<button class="btn btn-sm" onclick="testFeishuPush()">发送测试消息</button>';
+  $('#feishuPanel').innerHTML = html;
+}
+function testFeishuPush(){
+  FEISHU.lastPush = '刚刚';
+  showToast('测试消息已发送至飞书群', 'green');
+  renderFeishuPanel();
+}
+
+/* ===================== 9. 舆情知识库 ===================== */
+function renderKnowledgeView(){ renderKBTree(); renderKBCardList(); }
+function renderKBTree(){
+  var html = '';
+  for(var i=0;i<KB_CATEGORIES.length;i++){
+    var c = KB_CATEGORIES[i];
+    var active = state.kbFilter.category===c.key && !state.kbFilter.subcategory;
+    html += '<div class="kb-tree-group">';
+    html += '<div class="kb-tree-item' + (active?' active':'') + '" onclick="setKBFilter(\'' + c.key + '\', null)">' + c.label + '</div>';
+    if(c.subs){
+      html += '<div class="kb-tree-sub">';
+      for(var j=0;j<c.subs.length;j++){
+        var sub = c.subs[j];
+        var subActive = state.kbFilter.category===c.key && state.kbFilter.subcategory===sub;
+        html += '<div class="kb-tree-item' + (subActive?' active':'') + '" onclick="setKBFilter(\'' + c.key + '\',\'' + sub + '\')">└ ' + sub + '</div>';
+      }
+      html += '</div>';
+    }
+    html += '</div>';
+  }
+  html += '<div class="kb-tree-group"><div class="kb-tree-item' + (!state.kbFilter.category?' active':'') + '" onclick="setKBFilter(null,null)">📚 全部</div></div>';
+  $('#kbTree').innerHTML = html;
+}
+function setKBFilter(category, sub){
+  state.kbFilter.category = category;
+  state.kbFilter.subcategory = sub;
+  renderKBTree();
+  renderKBCardList();
+}
+function handleKBSearch(){
+  state.kbFilter.search = $('#kbSearchInput').value.trim();
+  renderKBCardList();
+}
+function filteredKBItems(){
+  return KNOWLEDGE.filter(function(k){
+    if(state.kbFilter.category && k.category!==state.kbFilter.category) return false;
+    if(state.kbFilter.subcategory && k.subcategory!==state.kbFilter.subcategory) return false;
+    if(state.kbFilter.search){
+      var kw = state.kbFilter.search;
+      if(k.title.indexOf(kw)===-1 && k.content.indexOf(kw)===-1) return false;
+    }
+    return true;
+  });
+}
+function renderKBCardList(){
+  var items = filteredKBItems();
+  $('#kbResultCount').textContent = '共 ' + items.length + ' 条';
+  var kw = state.kbFilter.search;
+  var html = '';
+  for(var i=0;i<items.length;i++){
+    var k = items[i];
+    var expanded = state.kbExpandedId===k.id;
+    html += '<div class="kb-card" onclick="toggleKBExpand(\'' + k.id + '\')">';
+    html += '<div class="kb-card-head"><span class="kb-card-title">' + highlightText(k.title, kw) + '</span><span class="badge badge-outline">' + k.category + (k.subcategory?(' · '+k.subcategory):'') + '</span>' + kbStatusBadge(k.status) + '</div>';
+    html += '<div class="kb-card-meta"><span>引用 ' + k.refCount + ' 次</span><span>更新于 ' + k.updatedAt + '</span></div>';
+    if(expanded){
+      html += '<div class="kb-full-text">' + highlightText(k.content, kw).replace(/\n/g,'<br>') + '</div>';
+      html += '<div class="rc-actions" style="margin-top:10px;" onclick="event.stopPropagation()">';
+      html += '<button class="btn btn-primary btn-sm" onclick="citeToReport(\'' + k.id + '\')">引用到当前报告</button>';
+      html += '<button class="btn btn-sm" onclick="editKBItem(\'' + k.id + '\')">编辑</button>';
+      html += '<button class="btn btn-sm" onclick="archiveKBItem(\'' + k.id + '\')">归档</button>';
+      html += '</div>';
+    }
+    html += '</div>';
+  }
+  $('#kbCardList').innerHTML = html || '<div class="empty-hint">未找到匹配的知识库内容</div>';
+}
+function toggleKBExpand(id){
+  state.kbExpandedId = state.kbExpandedId===id ? null : id;
+  renderKBCardList();
+}
+function kbItemById(id){
+  for(var i=0;i<KNOWLEDGE.length;i++){ if(KNOWLEDGE[i].id===id) return KNOWLEDGE[i]; }
+  return null;
+}
+function citeToReport(id){
+  var k = kbItemById(id); if(!k) return;
+  var r = reportById(state.activeReportId) || REPORTS[0];
+  r.content.push({text:'引用知识库「' + k.title + '」：' + k.content.substring(0,60) + '...', cite:k.id});
+  showToast('已引用到「' + r.period + '」周报草稿', 'green');
+}
+function editKBItem(id){
+  var k = kbItemById(id); if(!k) return;
+  var val = prompt('编辑内容：', k.content);
+  if(val===null) return;
+  k.content = val;
+  k.updatedAt = '刚刚';
+  k.status = '正常';
+  showToast('已更新知识库内容', 'green');
+  renderKBCardList();
+}
+function archiveKBItem(id){
+  var k = kbItemById(id); if(!k) return;
+  k.status = '已过期';
+  showToast('已归档「' + k.title + '」', 'green');
+  renderKBCardList();
+}
+function distillKnowledge(){
+  var archived = ALERTS.filter(function(a){ return a.status==='archived' && a.responseDraft; });
+  var added = 0;
+  for(var i=0;i<archived.length;i++){
+    var a = archived[i];
+    var exists = KNOWLEDGE.some(function(k){ return k.title.indexOf(a.id)!==-1; });
+    if(exists) continue;
+    KNOWLEDGE.unshift({id:'K' + (100+KNOWLEDGE.length+added), category:'案例', subcategory:a.category, title:a.category + '案例沉淀（' + a.id + '）', content:'预警：' + a.title + '\n处置口径：' + a.responseDraft, refCount:0, updatedAt:'刚刚', status:'正常'});
+    added++;
+  }
+  if(added===0){ showToast('暂无新的可沉淀处置记录', 'red'); return; }
+  showToast('已从 ' + added + ' 条处置记录中沉淀新知识', 'green');
+  renderKBCardList();
+}
+
+/* ===================== 10. 调度日历 ===================== */
+function firstWeekdayMon(y, m){
+  var d = new Date(y, m-1, 1).getDay();
+  return d===0 ? 6 : d-1;
+}
+function daysInMonth(y, m){ return new Date(y, m, 0).getDate(); }
+function pad2(n){ return n<10 ? '0'+n : ''+n; }
+function calNavMonth(delta){
+  state.calMonth += delta;
+  if(state.calMonth>12){ state.calMonth=1; state.calYear++; }
+  if(state.calMonth<1){ state.calMonth=12; state.calYear--; }
+  renderCalendarView();
+}
+function calGoToday(){
+  state.calYear = 2026; state.calMonth = 7; state.calSelectedDate = '2026-07-09';
+  renderCalendarView();
+}
+function selectCalDate(dateStr){
+  state.calSelectedDate = dateStr;
+  renderCalendarView();
+}
+function tasksOnDate(dateStr){
+  return CALENDAR_TASKS.filter(function(t){ return t.date===dateStr; });
+}
+function renderCalendarView(){
+  $('#calMonthLabel').textContent = state.calYear + ' 年 ' + state.calMonth + ' 月';
+  var dowHtml = '';
+  for(var i=0;i<CAL_DOW.length;i++){ dowHtml += '<div class="cal-dow">' + CAL_DOW[i] + '</div>'; }
+  $('#calDowRow').innerHTML = dowHtml;
+
+  var lead = firstWeekdayMon(state.calYear, state.calMonth);
+  var total = daysInMonth(state.calYear, state.calMonth);
+  var prevTotal = daysInMonth(state.calMonth===1?state.calYear-1:state.calYear, state.calMonth===1?12:state.calMonth-1);
+  var todayStr = '2026-07-09';
+  var html = '';
+  for(i=0;i<lead;i++){
+    var pd = prevTotal - lead + i + 1;
+    html += '<div class="cal-cell other-month"><div class="cal-date-num">' + pd + '</div></div>';
+  }
+  for(var day=1; day<=total; day++){
+    var dateStr = state.calYear + '-' + pad2(state.calMonth) + '-' + pad2(day);
+    var tasks = tasksOnDate(dateStr);
+    var isToday = dateStr===todayStr;
+    var isSelected = dateStr===state.calSelectedDate;
+    html += '<div class="cal-cell' + (isToday?' today':'') + (isSelected?' selected':'') + '" onclick="selectCalDate(\'' + dateStr + '\')">';
+    html += '<div class="cal-date-num">' + day + '</div>';
+    if(tasks.length){
+      html += '<div class="cal-dots">';
+      for(var j=0;j<tasks.length;j++){
+        var dotType = tasks[j].status==='已完成' ? 'done' : tasks[j].type;
+        html += '<span class="cal-dot" style="background:' + calTypeColor(dotType) + ';"></span>';
+      }
+      html += '</div>';
+    }
+    html += '</div>';
+  }
+  var totalCells = lead + total;
+  var trailing = (7 - (totalCells % 7)) % 7;
+  for(i=1;i<=trailing;i++){
+    html += '<div class="cal-cell other-month"><div class="cal-date-num">' + i + '</div></div>';
+  }
+  $('#calGrid').innerHTML = html;
+  renderCalTaskPanel();
+}
+function renderCalTaskPanel(){
+  var tasks = tasksOnDate(state.calSelectedDate);
+  var html = '<div class="panel-title" style="font-size:13px;">' + state.calSelectedDate + ' 任务</div>';
+  if(!tasks.length){ html += '<div class="empty-hint">当日暂无排期任务</div>'; }
+  for(var i=0;i<tasks.length;i++){
+    var t = tasks[i];
+    html += '<div class="task-card"><div class="task-card-head"><b style="font-size:12.8px;">' + esc(t.name) + '</b>' + taskStatusBadge(t.status) + '</div>';
+    html += '<div class="a-meta"><span class="badge badge-outline">' + calTypeLabel(t.type) + '</span>' + userChip(t.assigneeId) + '</div></div>';
+  }
+  $('#calTaskPanel').innerHTML = html;
+}
+
+/* ===================== 抽屉 ===================== */
+function openDrawer(title, bodyHtml){
+  $('#drawerTitle').textContent = title;
+  $('#drawerBody').innerHTML = bodyHtml;
+  $('#drawerOverlay').classList.remove('hidden');
+}
+function closeDrawer(){
+  $('#drawerOverlay').classList.add('hidden');
+  state.currentDrawerAlertId = null;
+}
+
+/* ===================== 全局搜索 Ctrl+K ===================== */
+var SEARCH_INDEX = [];
+function buildSearchIndex(){
+  var idx = [];
+  for(var i=0;i<REVIEW_QUEUE.length;i++){
+    var r = REVIEW_QUEUE[i];
+    idx.push({type:'内容', title:r.text, meta:PLATFORM_NAMES[r.platform] + ' · ' + r.author, action:"switchView('review');setActiveReviewCard('" + r.id + "')"});
+  }
+  for(i=0;i<ALERTS.length;i++){
+    var a = ALERTS[i];
+    idx.push({type:'预警', title:a.title, meta:a.level + ' · ' + statusBadgeAlert(a.status).replace(/<[^>]+>/g,''), action:"switchView('alerts');openAlertDrawer('" + a.id + "')"});
+  }
+  for(i=0;i<KNOWLEDGE.length;i++){
+    var k = KNOWLEDGE[i];
+    idx.push({type:'知识库', title:k.title, meta:k.category + (k.subcategory?(' · '+k.subcategory):''), action:"switchView('knowledge');toggleKBExpand('" + k.id + "')"});
+  }
+  for(i=0;i<CALENDAR_TASKS.length;i++){
+    var t = CALENDAR_TASKS[i];
+    idx.push({type:'日程', title:t.name, meta:t.date + ' · ' + calTypeLabel(t.type), action:"switchView('calendar');selectCalDate('" + t.date + "')"});
+  }
+  for(i=0;i<REPORTS.length;i++){
+    var rp = REPORTS[i];
+    idx.push({type:'报告', title:rp.period + ' 周报', meta:reportStatusBadge(rp.status).replace(/<[^>]+>/g,''), action:"switchView('reports');selectReport('" + rp.id + "')"});
+  }
+  return idx;
+}
+function openSearch(){
+  $('#searchOverlay').classList.remove('hidden');
+  $('#searchInput').value = '';
+  $('#searchResults').innerHTML = '<div class="empty-hint">输入至少 2 个字开始搜索</div>';
+  setTimeout(function(){ $('#searchInput').focus(); }, 30);
+}
+function closeSearch(){
+  $('#searchOverlay').classList.add('hidden');
+}
+function handleSearchInput(){
+  var kw = $('#searchInput').value.trim();
+  if(kw.length<2){ $('#searchResults').innerHTML = '<div class="empty-hint">输入至少 2 个字开始搜索</div>'; return; }
+  var results = SEARCH_INDEX.filter(function(item){ return item.title.indexOf(kw)!==-1; }).slice(0,30);
+  if(!results.length){ $('#searchResults').innerHTML = '<div class="empty-hint">未找到相关结果</div>'; return; }
+  var html = '';
+  for(var i=0;i<results.length;i++){
+    var r = results[i];
+    html += '<div class="search-result-item" onclick="runSearchResult(' + i + ')"><span class="badge badge-outline">' + r.type + '</span> ' + highlightText(r.title, kw) + '<div class="sr-meta">' + esc(r.meta) + '</div></div>';
+  }
+  $('#searchResults').innerHTML = html;
+  state.currentSearchResults = results;
+}
+function runSearchResult(i){
+  var r = state.currentSearchResults[i];
+  if(!r) return;
+  closeSearch();
+  (new Function(r.action))();
+}
+function confirmSearch(){
+  if(state.currentSearchResults && state.currentSearchResults.length){ runSearchResult(0); }
+}
+
+/* ===================== 新手引导 ===================== */
+var ONBOARDING_STEPS = [
+  {title:'第一步：发现', text:'系统 7×24 小时自动采集微博、抖音、小红书等 7 大平台内容，通过关键词与实体识别引擎实时发现潜在舆情风险，异常声量将自动触发预警。'},
+  {title:'第二步：处置', text:'预警进入四态看板（待处置/处理中/待确认/已归档），处置责任人可一键生成 AI 应对口径，经总监审核确认后自动推送飞书群，形成应对闭环。'},
+  {title:'第三步：复盘', text:'每一次处置记录都会沉淀为舆情知识库中的应对口径、分析模板与历史案例，配合调度日历统一管理采集计划与报告排期，让下一次响应更快。'}
+];
+var onboardingStep = 0;
+function openOnboarding(force){
+  if(!force && localStorage.getItem('yq_onboarded')==='1') return;
+  onboardingStep = 0;
+  renderOnboardingStep();
+  $('#onboardingOverlay').classList.remove('hidden');
+}
+function closeOnboarding(){
+  localStorage.setItem('yq_onboarded', '1');
+  $('#onboardingOverlay').classList.add('hidden');
+}
+function renderOnboardingStep(){
+  var stepsHtml = '';
+  for(var i=0;i<ONBOARDING_STEPS.length;i++){
+    stepsHtml += '<span class="' + (i<=onboardingStep?'done':'') + '"></span>';
+  }
+  $('#onboardingSteps').innerHTML = stepsHtml;
+  var s = ONBOARDING_STEPS[onboardingStep];
+  $('#onboardingContent').innerHTML = '<div style="font-size:16px;font-weight:800;margin-bottom:10px;">' + s.title + '</div><div style="font-size:13px;line-height:1.9;color:var(--text-secondary);">' + s.text + '</div>';
+  $('#obPrevBtn').style.visibility = onboardingStep===0 ? 'hidden' : 'visible';
+  $('#obNextBtn').textContent = onboardingStep===ONBOARDING_STEPS.length-1 ? '开始使用' : '下一步';
+}
+function onboardingNext(){
+  if(onboardingStep>=ONBOARDING_STEPS.length-1){ closeOnboarding(); return; }
+  onboardingStep++;
+  renderOnboardingStep();
+}
+function onboardingPrev(){
+  if(onboardingStep>0){ onboardingStep--; renderOnboardingStep(); }
+}
+
+/* ===================== 时钟 ===================== */
+function updateClock(){
+  var d = new Date();
+  var h = pad2(d.getHours()), m = pad2(d.getMinutes()), s = pad2(d.getSeconds());
+  $('#clock').textContent = h + ':' + m + ':' + s;
+}
+
+/* ===================== 键盘快捷键 ===================== */
+document.addEventListener('keydown', function(e){
+  if(e.key==='Escape'){
+    if(!$('#drawerOverlay').classList.contains('hidden')){ closeDrawer(); return; }
+    if(!$('#searchOverlay').classList.contains('hidden')){ closeSearch(); return; }
+  }
+  if((e.ctrlKey || e.metaKey) && e.key.toLowerCase()==='k'){
+    e.preventDefault();
+    openSearch();
+    return;
+  }
+  if((e.ctrlKey || e.metaKey) && /^[0-9]$/.test(e.key)){
+    var idx = e.key==='0' ? 9 : (parseInt(e.key,10)-1);
+    if(VIEWS[idx]){
+      e.preventDefault();
+      switchView(VIEWS[idx].id);
+    }
+    return;
+  }
+  handleReviewShortcut(e);
+});
+
+/* ===================== 初始化 ===================== */
+function init(){
+  renderNav();
+  renderHealthStrip();
+  renderCollectTable();
+  renderReviewFilters();
+  applyReviewFilters();
+  renderChuanweiPanel();
+  renderAnalysisView();
+  renderAlertsKanban();
+  renderCooldownList();
+  renderFalsePositiveList();
+  renderReportsTab();
+  renderCompetitorView();
+  renderConfigView();
+  renderKnowledgeView();
+  renderCalendarView();
+  SEARCH_INDEX = buildSearchIndex();
+  switchView('overview');
+  updateClock();
+  setInterval(updateClock, 1000);
+  openOnboarding(false);
+}
+document.addEventListener('DOMContentLoaded', init);
+</script>
+</body>
+</html>

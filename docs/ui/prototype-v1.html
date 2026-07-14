@@ -1,0 +1,635 @@
+<!DOCTYPE html>
+<!-- Historical UI prototype. The production workbench lives in yuqing/web/workbench/. -->
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cyber-Intelligence · UI Prototype V1</title>
+
+    <!-- Ant Design CSS -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/antd@5.12.8/dist/reset.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/antd@5.12.8/dist/antd.min.css">
+
+    <!-- Iconify 图标 -->
+    <script src="https://code.iconify.design/3/3.1.0/iconify.min.js"></script>
+
+    <!-- ECharts -->
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+
+    <!-- Alpine.js -->
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.3/dist/cdn.min.js"></script>
+
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --primary-color: #1890ff;
+            --success-color: #52c41a;
+            --warning-color: #faad14;
+            --danger-color: #f5222d;
+            --text-primary: #262626;
+            --text-secondary: #8c8c8c;
+            --bg-light: #fafafa;
+            --border-color: #e8e8e8;
+            --sidebar-width: 220px;
+            --topbar-height: 64px;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', sans-serif;
+            background: var(--bg-light);
+            color: var(--text-primary);
+        }
+
+        /* 顶部导航栏 */
+        .topbar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: var(--topbar-height);
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 24px;
+            z-index: 1000;
+        }
+
+        .topbar-left {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            color: white;
+            font-size: 20px;
+            font-weight: 600;
+        }
+
+        .logo-icon {
+            width: 40px;
+            height: 40px;
+            background: rgba(255,255,255,0.2);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .topbar-right {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }
+
+        .topbar-icon {
+            color: white;
+            font-size: 20px;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+
+        .topbar-icon:hover {
+            opacity: 0.8;
+        }
+
+        .user-info {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: white;
+            cursor: pointer;
+        }
+
+        .user-avatar {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: rgba(255,255,255,0.3);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        /* 侧边栏 */
+        .sidebar {
+            position: fixed;
+            left: 0;
+            top: var(--topbar-height);
+            bottom: 0;
+            width: var(--sidebar-width);
+            background: white;
+            box-shadow: 2px 0 8px rgba(0,0,0,0.05);
+            overflow-y: auto;
+            z-index: 999;
+        }
+
+        .sidebar::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .sidebar::-webkit-scrollbar-thumb {
+            background: #d9d9d9;
+            border-radius: 3px;
+        }
+
+        .menu-group {
+            padding: 16px 0;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .menu-group-title {
+            padding: 8px 24px;
+            font-size: 12px;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            font-weight: 600;
+        }
+
+        .menu-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 24px;
+            color: var(--text-primary);
+            cursor: pointer;
+            transition: all 0.2s;
+            text-decoration: none;
+        }
+
+        .menu-item:hover {
+            background: var(--bg-light);
+            color: var(--primary-color);
+        }
+
+        .menu-item.active {
+            background: #e6f7ff;
+            color: var(--primary-color);
+            border-right: 3px solid var(--primary-color);
+            font-weight: 500;
+        }
+
+        .menu-item-icon {
+            font-size: 18px;
+        }
+
+        .menu-item-text {
+            flex: 1;
+        }
+
+        .menu-item-badge {
+            background: var(--danger-color);
+            color: white;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 12px;
+        }
+
+        /* 主内容区 */
+        .main-content {
+            margin-left: var(--sidebar-width);
+            margin-top: var(--topbar-height);
+            padding: 24px;
+            min-height: calc(100vh - var(--topbar-height));
+        }
+
+        .page-header {
+            margin-bottom: 24px;
+        }
+
+        .page-title {
+            font-size: 24px;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+
+        .page-description {
+            color: var(--text-secondary);
+            font-size: 14px;
+        }
+
+        /* 卡片 */
+        .card {
+            background: white;
+            border-radius: 8px;
+            padding: 24px;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+            margin-bottom: 16px;
+        }
+
+        .card-title {
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 16px;
+        }
+
+        /* 栅格系统 */
+        .row {
+            display: flex;
+            gap: 16px;
+            margin-bottom: 16px;
+        }
+
+        .col {
+            flex: 1;
+        }
+
+        .col-2 { flex: 0 0 calc(16.66% - 13.33px); }
+        .col-3 { flex: 0 0 calc(25% - 12px); }
+        .col-4 { flex: 0 0 calc(33.33% - 10.67px); }
+        .col-6 { flex: 0 0 calc(50% - 8px); }
+        .col-8 { flex: 0 0 calc(66.66% - 5.33px); }
+        .col-9 { flex: 0 0 calc(75% - 4px); }
+
+        /* 占位页面 */
+        .placeholder {
+            text-align: center;
+            padding: 80px 24px;
+            color: var(--text-secondary);
+        }
+
+        .placeholder-icon {
+            font-size: 64px;
+            margin-bottom: 16px;
+            opacity: 0.3;
+        }
+
+        .placeholder-text {
+            font-size: 16px;
+            margin-bottom: 8px;
+        }
+
+        .placeholder-hint {
+            font-size: 14px;
+            opacity: 0.6;
+        }
+
+        /* 响应式 */
+        @media (max-width: 1024px) {
+            .sidebar {
+                transform: translateX(-100%);
+                transition: transform 0.3s;
+            }
+
+            .sidebar.open {
+                transform: translateX(0);
+            }
+
+            .main-content {
+                margin-left: 0;
+            }
+
+            :root {
+                --sidebar-width: 0;
+            }
+        }
+
+        /* 加载动画 */
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(255,255,255,0.3);
+            border-radius: 50%;
+            border-top-color: white;
+            animation: spin 1s ease-in-out infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body x-data="app()">
+
+    <!-- 顶部导航栏 -->
+    <div class="topbar">
+        <div class="topbar-left">
+            <div class="logo">
+                <div class="logo-icon">
+                    <iconify-icon icon="mdi:chart-line"></iconify-icon>
+                </div>
+                <span>舆情监控系统</span>
+            </div>
+        </div>
+        <div class="topbar-right">
+            <div class="topbar-icon" title="通知">
+                <iconify-icon icon="mdi:bell-outline"></iconify-icon>
+            </div>
+            <div class="topbar-icon" title="帮助">
+                <iconify-icon icon="mdi:help-circle-outline"></iconify-icon>
+            </div>
+            <div class="user-info">
+                <div class="user-avatar">
+                    <iconify-icon icon="mdi:account"></iconify-icon>
+                </div>
+                <span>管理员</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- 侧边栏 -->
+    <div class="sidebar">
+        <!-- 概览中心 -->
+        <div class="menu-group">
+            <div class="menu-group-title">概览</div>
+            <a href="#/dashboard" class="menu-item" :class="{ active: currentPage === 'dashboard' }" @click="navigate('dashboard')">
+                <span class="menu-item-icon"><iconify-icon icon="mdi:view-dashboard"></iconify-icon></span>
+                <span class="menu-item-text">品牌健康看板</span>
+            </a>
+        </div>
+
+        <!-- 数据分析 -->
+        <div class="menu-group">
+            <div class="menu-group-title">数据分析</div>
+            <a href="#/analysis/sentiment" class="menu-item" :class="{ active: currentPage === 'sentiment' }" @click="navigate('sentiment')">
+                <span class="menu-item-icon"><iconify-icon icon="mdi:emoticon-outline"></iconify-icon></span>
+                <span class="menu-item-text">情感分析</span>
+            </a>
+            <a href="#/analysis/topics" class="menu-item" :class="{ active: currentPage === 'topics' }" @click="navigate('topics')">
+                <span class="menu-item-icon"><iconify-icon icon="mdi:tag-multiple"></iconify-icon></span>
+                <span class="menu-item-text">话题分析</span>
+            </a>
+            <a href="#/analysis/aspects" class="menu-item" :class="{ active: currentPage === 'aspects' }" @click="navigate('aspects')">
+                <span class="menu-item-icon"><iconify-icon icon="mdi:radar"></iconify-icon></span>
+                <span class="menu-item-text">方面分析</span>
+            </a>
+            <a href="#/analysis/kol" class="menu-item" :class="{ active: currentPage === 'kol' }" @click="navigate('kol')">
+                <span class="menu-item-icon"><iconify-icon icon="mdi:account-star"></iconify-icon></span>
+                <span class="menu-item-text">KOL分析</span>
+            </a>
+            <a href="#/analysis/competitors" class="menu-item" :class="{ active: currentPage === 'competitors' }" @click="navigate('competitors')">
+                <span class="menu-item-icon"><iconify-icon icon="mdi:sword-cross"></iconify-icon></span>
+                <span class="menu-item-text">竞品对比</span>
+            </a>
+        </div>
+
+        <!-- 智能检索 -->
+        <div class="menu-group">
+            <div class="menu-group-title">检索</div>
+            <a href="#/search" class="menu-item" :class="{ active: currentPage === 'search' }" @click="navigate('search')">
+                <span class="menu-item-icon"><iconify-icon icon="mdi:magnify"></iconify-icon></span>
+                <span class="menu-item-text">智能检索</span>
+            </a>
+        </div>
+
+        <!-- 关键词库 -->
+        <div class="menu-group">
+            <div class="menu-group-title">关键词库</div>
+            <a href="#/keywords" class="menu-item" :class="{ active: currentPage === 'keywords' }" @click="navigate('keywords')">
+                <span class="menu-item-icon"><iconify-icon icon="mdi:book-open-variant"></iconify-icon></span>
+                <span class="menu-item-text">词库管理</span>
+            </a>
+            <a href="#/keywords/analytics" class="menu-item" :class="{ active: currentPage === 'keywords-analytics' }" @click="navigate('keywords-analytics')">
+                <span class="menu-item-icon"><iconify-icon icon="mdi:chart-bar"></iconify-icon></span>
+                <span class="menu-item-text">关键词分析</span>
+            </a>
+            <a href="#/keywords/graph" class="menu-item" :class="{ active: currentPage === 'keywords-graph' }" @click="navigate('keywords-graph')">
+                <span class="menu-item-icon"><iconify-icon icon="mdi:graph"></iconify-icon></span>
+                <span class="menu-item-text">关系图谱</span>
+            </a>
+        </div>
+
+        <!-- 诉求管理 -->
+        <div class="menu-group">
+            <div class="menu-group-title">管理</div>
+            <a href="#/backlog" class="menu-item" :class="{ active: currentPage === 'backlog' }" @click="navigate('backlog')">
+                <span class="menu-item-icon"><iconify-icon icon="mdi:clipboard-list"></iconify-icon></span>
+                <span class="menu-item-text">诉求管理</span>
+                <span class="menu-item-badge" x-show="pendingCount > 0" x-text="pendingCount"></span>
+            </a>
+            <a href="#/review" class="menu-item" :class="{ active: currentPage === 'review' }" @click="navigate('review')">
+                <span class="menu-item-icon"><iconify-icon icon="mdi:check-circle-outline"></iconify-icon></span>
+                <span class="menu-item-text">人工复核</span>
+                <span class="menu-item-badge" x-show="reviewCount > 0" x-text="reviewCount"></span>
+            </a>
+        </div>
+
+        <!-- 系统配置 -->
+        <div class="menu-group">
+            <div class="menu-group-title">系统</div>
+            <a href="#/settings/watch" class="menu-item" :class="{ active: currentPage === 'settings-watch' }" @click="navigate('settings-watch')">
+                <span class="menu-item-icon"><iconify-icon icon="mdi:monitor-eye"></iconify-icon></span>
+                <span class="menu-item-text">监控配置</span>
+            </a>
+            <a href="#/settings/api" class="menu-item" :class="{ active: currentPage === 'settings-api' }" @click="navigate('settings-api')">
+                <span class="menu-item-icon"><iconify-icon icon="mdi:api"></iconify-icon></span>
+                <span class="menu-item-text">API配置</span>
+            </a>
+            <a href="#/settings/alerts" class="menu-item" :class="{ active: currentPage === 'settings-alerts' }" @click="navigate('settings-alerts')">
+                <span class="menu-item-icon"><iconify-icon icon="mdi:alert-circle-outline"></iconify-icon></span>
+                <span class="menu-item-text">预警配置</span>
+            </a>
+        </div>
+    </div>
+
+    <!-- 主内容区 -->
+    <div class="main-content">
+        <!-- 动态内容区域 -->
+        <div id="page-content" x-html="pageContent"></div>
+    </div>
+
+    <script>
+        function app() {
+            return {
+                currentPage: 'dashboard',
+                pendingCount: 12,
+                reviewCount: 8,
+                pageContent: '',
+
+                init() {
+                    // 初始化路由
+                    this.handleRoute();
+                    window.addEventListener('hashchange', () => this.handleRoute());
+                },
+
+                handleRoute() {
+                    const hash = window.location.hash.slice(2) || 'dashboard';
+                    const page = hash.split('/').pop() || 'dashboard';
+                    this.navigate(page);
+                },
+
+                navigate(page) {
+                    this.currentPage = page;
+                    this.loadPage(page);
+                },
+
+                loadPage(page) {
+                    // 页面内容映射
+                    const pages = {
+                        'dashboard': this.renderDashboard(),
+                        'sentiment': this.renderPlaceholder('情感分析', 'mdi:emoticon-outline', '展示情感趋势、情感强度分布、高风险帖子列表'),
+                        'topics': this.renderPlaceholder('话题分析', 'mdi:tag-multiple', '话题词云、语义话题聚类、话题趋势对比'),
+                        'aspects': this.renderPlaceholder('方面分析', 'mdi:radar', '方面雷达图、方面情感交叉分析、痛点优先级排序'),
+                        'kol': this.renderPlaceholder('KOL分析', 'mdi:account-star', 'KOL影响力排行榜、KOL画像、传播路径分析'),
+                        'competitors': this.renderPlaceholder('竞品对比', 'mdi:sword-cross', 'SOV声量份额、情感对比、优劣势分析'),
+                        'search': this.renderPlaceholder('智能检索', 'mdi:magnify', '语义检索、高级筛选、搜索历史'),
+                        'keywords': this.renderPlaceholder('词库管理', 'mdi:book-open-variant', '关键词列表、添加/删除、标签筛选、AI推荐审核'),
+                        'keywords-analytics': this.renderPlaceholder('关键词分析', 'mdi:chart-bar', '使用频率统计、效果评估、优化建议'),
+                        'keywords-graph': this.renderPlaceholder('关系图谱', 'mdi:graph', '交互式网络图展示similar关系'),
+                        'backlog': this.renderPlaceholder('诉求管理', 'mdi:clipboard-list', '诉求列表、状态管理、批量导出、优先级标记'),
+                        'review': this.renderPlaceholder('人工复核', 'mdi:check-circle-outline', '复核队列、快速标注、复核统计、机器准确率报告'),
+                        'settings-watch': this.renderPlaceholder('监控配置', 'mdi:monitor-eye', '监控实体管理、监控词配置、平台开关'),
+                        'settings-api': this.renderPlaceholder('API配置', 'mdi:api', 'DeepSeek/MiniMax/飞书配置、Embedding配置、连通性测试'),
+                        'settings-alerts': this.renderPlaceholder('预警配置', 'mdi:alert-circle-outline', '预警规则、通知渠道、阈值设置'),
+                    };
+
+                    this.pageContent = pages[page] || pages['dashboard'];
+                    if (page === 'dashboard') {
+                        this.$nextTick(() => this.initDashboardCharts());
+                    }
+                },
+
+                initDashboardCharts() {
+                    const trendEl = document.getElementById('trendChart');
+                    const platformEl = document.getElementById('platformChart');
+                    if (!trendEl || !platformEl || typeof echarts === 'undefined') return;
+                    echarts.init(trendEl).setOption({
+                        tooltip: { trigger: 'axis' },
+                        legend: { data: ['正面', '负面', '中性'] },
+                        xAxis: { type: 'category', data: ['07-01', '07-02', '07-03', '07-04', '07-05', '07-06', '07-07'] },
+                        yAxis: { type: 'value' },
+                        series: [
+                            { name: '正面', type: 'line', smooth: true, data: [120, 132, 101, 134, 90, 230, 210], itemStyle: { color: '#52c41a' } },
+                            { name: '负面', type: 'line', smooth: true, data: [220, 182, 191, 234, 290, 330, 310], itemStyle: { color: '#f5222d' } },
+                            { name: '中性', type: 'line', smooth: true, data: [150, 232, 201, 154, 190, 330, 410], itemStyle: { color: '#8c8c8c' } }
+                        ]
+                    });
+                    echarts.init(platformEl).setOption({
+                        tooltip: { trigger: 'item' },
+                        series: [{
+                            type: 'pie',
+                            radius: '70%',
+                            data: [
+                                { value: 450, name: '微博' },
+                                { value: 320, name: '小红书' },
+                                { value: 240, name: '知乎' },
+                                { value: 180, name: '抖音' },
+                                { value: 50, name: '黑猫投诉' }
+                            ],
+                            label: { show: true, formatter: '{b}: {c}' }
+                        }]
+                    });
+                },
+
+                renderDashboard() {
+                    return `
+                        <div class="page-header">
+                            <div class="page-title">品牌健康看板</div>
+                            <div class="page-description">一屏掌握品牌舆情全局</div>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-3">
+                                <div class="card" style="text-align:center;background:linear-gradient(135deg,#667eea,#764ba2);color:white;">
+                                    <div style="font-size:48px;font-weight:700;margin-bottom:8px;">85</div>
+                                    <div style="opacity:0.9;">品牌健康指数 BHI</div>
+                                </div>
+                            </div>
+                            <div class="col-3">
+                                <div class="card" style="text-align:center;">
+                                    <div style="font-size:40px;font-weight:700;color:#1890ff;margin-bottom:8px;">1,240</div>
+                                    <div style="color:#8c8c8c;">总声量</div>
+                                </div>
+                            </div>
+                            <div class="col-3">
+                                <div class="card" style="text-align:center;">
+                                    <div style="font-size:40px;font-weight:700;color:#f5222d;margin-bottom:8px;">12</div>
+                                    <div style="color:#8c8c8c;">负面帖子</div>
+                                </div>
+                            </div>
+                            <div class="col-3">
+                                <div class="card" style="text-align:center;">
+                                    <div style="font-size:40px;font-weight:700;color:#faad14;margin-bottom:8px;">⚠️</div>
+                                    <div style="color:#8c8c8c;">危机预警</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-8">
+                                <div class="card">
+                                    <div class="card-title">情感趋势 (最近7日)</div>
+                                    <div id="trendChart" style="height:300px;"></div>
+                                </div>
+                            </div>
+                            <div class="col-4">
+                                <div class="card">
+                                    <div class="card-title">平台分布</div>
+                                    <div id="platformChart" style="height:300px;"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-6">
+                                <div class="card">
+                                    <div class="card-title">热点话题 Top5</div>
+                                    <div style="padding:12px 0;">
+                                        <div style="padding:12px 0;border-bottom:1px solid #f0f0f0;display:flex;justify-content:space-between;">
+                                            <span>• 发热问题</span><span style="color:#f5222d;font-weight:600;">45条</span>
+                                        </div>
+                                        <div style="padding:12px 0;border-bottom:1px solid #f0f0f0;display:flex;justify-content:space-between;">
+                                            <span>• 续航差</span><span style="color:#f5222d;font-weight:600;">38条</span>
+                                        </div>
+                                        <div style="padding:12px 0;border-bottom:1px solid #f0f0f0;display:flex;justify-content:space-between;">
+                                            <span>• 性价比高</span><span style="color:#52c41a;font-weight:600;">56条</span>
+                                        </div>
+                                        <div style="padding:12px 0;border-bottom:1px solid #f0f0f0;display:flex;justify-content:space-between;">
+                                            <span>• 售后服务</span><span style="color:#f5222d;font-weight:600;">23条</span>
+                                        </div>
+                                        <div style="padding:12px 0;display:flex;justify-content:space-between;">
+                                            <span>• 屏幕效果</span><span style="color:#52c41a;font-weight:600;">34条</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-6">
+                                <div class="card">
+                                    <div class="card-title">危机预警</div>
+                                    <div style="padding:12px 0;">
+                                        <div style="padding:16px;background:#fff2e8;border-left:4px solid #fa8c16;margin-bottom:12px;border-radius:4px;">
+                                            <div style="font-weight:600;margin-bottom:8px;">🚨 黑猫投诉 2条</div>
+                                            <div style="font-size:14px;color:#8c8c8c;">要求退款、虚假宣传</div>
+                                        </div>
+                                        <div style="padding:16px;background:#fff1f0;border-left:4px solid #f5222d;border-radius:4px;">
+                                            <div style="font-weight:600;margin-bottom:8px;">⚠️ 高风险帖子 12条</div>
+                                            <div style="font-size:14px;color:#8c8c8c;">风险分≥4，需人工复核</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                },
+
+                renderPlaceholder(title, icon, description) {
+                    return `
+                        <div class="page-header">
+                            <div class="page-title">${title}</div>
+                            <div class="page-description">${description}</div>
+                        </div>
+                        <div class="card">
+                            <div class="placeholder">
+                                <div class="placeholder-icon"><iconify-icon icon="${icon}"></iconify-icon></div>
+                                <div class="placeholder-text">${title}模块</div>
+                                <div class="placeholder-hint">该功能正在开发中...</div>
+                            </div>
+                        </div>
+                    `;
+                }
+            }
+        }
+    </script>
+</body>
+</html>

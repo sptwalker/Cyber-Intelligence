@@ -50,6 +50,7 @@ python3 -c "from yuqing.dashboard import serve; serve(db='yuqing-demo.db')"
 - `/legacy`、`/dash`、`/exec`：服务端渲染的回退及专项视图。
 
 历史静态原型不参与 Python 包、Docker 镜像或运行时路由，避免出现多份页面各自演进。
+原型归档及版本对应关系见 [`docs/ui/README.md`](docs/ui/README.md)。
 
 **语义向量化**（配置页填 `EMBED_API_KEY`=阿里百炼即启用，无 key 全部降级回词汇匹配、不阻塞）：语义检索（问"电池"召回只说"续航"的帖）· 话题语义归并（"续航差"+"电池不耐用"归一簇）· 洗稿近似去重（改写控评识别为同簇）· 监控目标语义扩展（`cli suggest` 从数据发现该监控的新词，人工确认）。可选语义相关性过滤 `SEMANTIC_RELEVANCE=1`（召回不含品牌字面的相关帖，默认关）。
 

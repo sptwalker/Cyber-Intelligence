@@ -213,6 +213,7 @@ notify_cce_success:
       optional: true
   rules:
     - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "master"'
+      changes: *pipeline_changes
       when: on_success
     - when: never
   variables:
@@ -222,6 +223,7 @@ notify_cce_failure:
   extends: .notify_cce
   rules:
     - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "master"'
+      changes: *pipeline_changes
       when: on_failure
     - when: never
   variables:
