@@ -59,9 +59,9 @@ production database. OpenCLI and its Browser Bridge extension are pinned in
 kubectl -n nexus-prod get pod -l app.kubernetes.io/name=cyber-intelligence
 kubectl -n nexus-prod logs deploy/cyber-intelligence -c cyber-intelligence-collector
 kubectl -n nexus-prod exec deploy/cyber-intelligence -c cyber-intelligence -- \
-  python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8788/healthz').read().decode())"
+  python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8788/readyz').read().decode())"
 ```
 
-The health payload must report `opencli_available=true` and
+The readiness payload must report `opencli_available=true` and
 `browser_connected=true`. Platform-specific `logged_in=false` does not make the
 Collector unhealthy; it only disables successful collection for that platform.

@@ -25,7 +25,7 @@ def enabled() -> bool:
 
 def _request(
     path: str, *, method: str = "GET", body: dict[str, Any] | None = None,
-    timeout: int = 15,
+    timeout: int = 15, allow_not_ready: bool = False,
 ) -> dict[str, Any]:
     target = base_url()
     if not target:
@@ -41,12 +41,17 @@ def _request(
         with urllib.request.urlopen(request, timeout=timeout) as response:
             payload = json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
+        payload = None
         try:
             payload = json.loads(exc.read().decode("utf-8"))
-            message = payload.get("error") or payload.get("message")
+            message = (
+                payload.get("error") or payload.get("message")
+                if isinstance(payload, dict) else None
+            )
         except Exception:
             message = None
-        raise RuntimeError(str(message or f"Collector HTTP {exc.code}")) from exc
+        if not (allow_not_ready and exc.code == 503 and isinstance(payload, dict)):
+            raise RuntimeError(str(message or f"Collector HTTP {exc.code}")) from exc
     except (OSError, ValueError, urllib.error.URLError) as exc:
         raise RuntimeError(f"Collector 不可用：{str(exc)[:160]}") from exc
     if not isinstance(payload, dict):
@@ -58,7 +63,7 @@ def _request(
 
 def health(*, timeout: int = 5) -> dict[str, Any]:
     try:
-        return _request("/healthz", timeout=timeout)
+        return _request("/readyz", timeout=timeout, allow_not_ready=True)
     except RuntimeError as exc:
         return {
             "success": False,

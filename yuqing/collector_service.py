@@ -94,6 +94,17 @@ def health_payload() -> dict:
     }
 
 
+def liveness_payload() -> dict:
+    """Return a local-only listener liveness response without capability checks."""
+    return {
+        "success": True,
+        "ready": True,
+        "opencli_available": None,
+        "browser_connected": None,
+        "message": "Collector HTTP 服务运行中；能力状态请检查 /readyz",
+    }
+
+
 def selfcheck_payload() -> dict:
     """Return a deterministic item without touching a platform or login session."""
     return {
@@ -143,9 +154,12 @@ class CollectorHandler(BaseHTTPRequestHandler):
         if parsed.path == "/v1/selfcheck":
             self._json(selfcheck_payload())
             return
-        if parsed.path in {"/healthz", "/readyz"}:
+        if parsed.path == "/healthz":
+            self._json(liveness_payload())
+            return
+        if parsed.path == "/readyz":
             payload = health_payload()
-            self._json(payload, 200 if parsed.path == "/healthz" or payload["ready"] else 503)
+            self._json(payload, 200 if payload["ready"] else 503)
             return
         if parsed.path == "/v1/login/status":
             platforms = [
