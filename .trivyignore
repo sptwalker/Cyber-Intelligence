@@ -1,6 +1,13 @@
-# Trivy ignore — Debian bookworm packages with no fixed version
-# Evidence: collector scan in pipeline 1465 / job 8483 (Debian 12.15).
+# Trivy ignore — exact Debian base-OS CVEs with no vendor fixed version
+# Current evidence: pipeline 1528 / job 8966 scanned python:3.12-slim (Debian 13.5).
+# Prior entries retain their reviewed Debian 12.15/bookworm context below.
 # Policy: re-evaluate on each base-image upgrade; all entries expire 2027-01-01.
+
+# Current Debian 13.5 runtime findings.
+# CVE-2026-13221: Status=affected; Reason=perl-base 5.40.1-6 in python:3.12-slim (Debian 13.5) has no Debian fixed version per pipeline 1528/job 8966; Expires=2027-01-01
+CVE-2026-13221
+# CVE-2026-57432: Status=affected; Reason=perl-base 5.40.1-6 in python:3.12-slim (Debian 13.5) has no Debian fixed version per pipeline 1528/job 8966; Expires=2027-01-01
+CVE-2026-57432
 
 # Existing Debian findings retained from the prior reviewed policy set.
 # CVE-2026-53615: Status=fix_deferred; Reason=util-linux packages have no Debian bookworm fixed version; Expires=2027-01-01

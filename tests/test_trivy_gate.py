@@ -15,6 +15,10 @@ FIXED_APPLICATION_CVES = {
     "CVE-2026-33671",  # npm-bundled picomatch 4.0.3 -> 4.0.4
     "CVE-2026-48815",  # npm-bundled sigstore 3.1.0 -> 4.1.1
 }
+PIPELINE_1528_PERL_CVES = {
+    "CVE-2026-13221",
+    "CVE-2026-57432",
+}
 IGNORE_ENTRY = re.compile(r"^CVE-\d{4}-\d+$")
 IGNORE_DOCUMENTATION = re.compile(
     r"^# (?P<cve>CVE-\d{4}-\d+): "
@@ -65,6 +69,42 @@ class TrivyGateTest(unittest.TestCase):
 
     def test_fixed_application_findings_are_not_ignored(self) -> None:
         self.assertEqual(set(), FIXED_APPLICATION_CVES & self.ignored_cves)
+
+    def test_pipeline_1528_perl_findings_are_narrow_base_os_exceptions(self) -> None:
+        problems: list[str] = []
+        for cve in sorted(PIPELINE_1528_PERL_CVES):
+            matching_lines = [
+                index for index, line in enumerate(self.ignore_lines) if line.strip() == cve
+            ]
+            if len(matching_lines) != 1:
+                problems.append(f"{cve}: expected exactly one ignore entry")
+                continue
+
+            documentation = IGNORE_DOCUMENTATION.fullmatch(
+                self.ignore_lines[matching_lines[0] - 1].strip()
+            )
+            if documentation is None:
+                problems.append(f"{cve}: missing adjacent policy documentation")
+                continue
+
+            if documentation.group("status") != "affected":
+                problems.append(
+                    f"{cve}: status {documentation.group('status')!r} != 'affected'"
+                )
+
+            documented_line = documentation.group(0)
+            for expected in (
+                "perl-base 5.40.1-6",
+                "python:3.12-slim",
+                "Debian 13.5",
+                "no Debian fixed version",
+                "pipeline 1528/job 8966",
+                f"Expires={POLICY_EXPIRY}",
+            ):
+                if expected not in documented_line:
+                    problems.append(f"{cve}: documentation missing {expected!r}")
+
+        self.assertEqual([], problems, "\n" + "\n".join(problems))
 
     def test_build_only_npm_bundle_is_removed_after_opencli_install(self) -> None:
         install = _run_command(self.dockerfile, "npm install --global")
