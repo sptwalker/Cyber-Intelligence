@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import io
 import json
 import os
@@ -34,6 +35,7 @@ WATCH = {
 def seed(path: str) -> str:
     store = Store(path)
     try:
+        fixture_date = dt.date.today().isoformat()
         doc = CleanDoc.build(
             platform="weibo", native_id="report-source", entity_id="youdoo",
             text="售后退款仍未解决", author="测试用户", publish_ts="2026-07-14T08:00:00+08:00",
@@ -59,7 +61,7 @@ def seed(path: str) -> str:
         })
         store.log_run(
             "run-1", "weibo", "youdoo", 1, "ok", "ok", "",
-            "2026-07-14T09:00:00+08:00",
+            f"{fixture_date}T09:00:00+08:00",
         )
         store.save_report(
             "run-report", "2026-07-14T09:10:00+08:00",
@@ -76,6 +78,14 @@ class ReportReadModelTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.db = os.path.join(self.tmp.name, "yuqing.db")
         self.doc_id = seed(self.db)
+        store = Store(self.db)
+        try:
+            latest_run = store.conn.execute(
+                "SELECT ts FROM run_log ORDER BY ts DESC LIMIT 1",
+            ).fetchone()
+        finally:
+            store.close()
+        self.assertEqual(dt.date.today().isoformat(), latest_run["ts"][:10])
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
