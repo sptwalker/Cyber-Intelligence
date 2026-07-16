@@ -71,6 +71,61 @@ class CIRulesTest(unittest.TestCase):
             with self.subTest(job_name=job_name):
                 self.assertTrue(_runs_on_main(self.config, job_name, mixed))
 
+    def test_deploy_rollout_failure_diagnostics_are_scoped_and_bounded(self) -> None:
+        deploy_script = self.config["deploy_cce"]["script"]
+        rollout_block = deploy_script[-1]
+
+        self.assertIsInstance(rollout_block, str)
+        self.assertEqual(
+            1,
+            rollout_block.count(
+                "kubectl rollout status deployment/cyber-intelligence "
+                "-n nexus-prod --timeout=3m"
+            ),
+        )
+        self.assertIn(
+            'kubectl rollout status deployment/cyber-intelligence '
+            '-n nexus-prod --timeout=3m || rollout_rc=$?',
+            rollout_block,
+        )
+        self.assertIn(
+            'if [ "$rollout_rc" -eq 0 ]; then\n  exit 0\nfi',
+            rollout_block,
+        )
+        self.assertTrue(rollout_block.rstrip().endswith('exit "$rollout_rc"'))
+
+        failure_branch = rollout_block.split(
+            'echo "ERROR: rollout failed; collecting bounded Kubernetes diagnostics"',
+            maxsplit=1,
+        )[1]
+        required_fragments = (
+            'kubectl get "deployment/$deployment" -n "$namespace"',
+            ".status.conditions[*]",
+            'kubectl get pods -n "$namespace" -l "$selector"',
+            "tail -n 5",
+            'kubectl get events -n "$namespace"',
+            "tail -n 40",
+            'kubectl describe "$pod" -n "$namespace"',
+            "sed -n '1,220p'",
+        )
+        for fragment in required_fragments:
+            with self.subTest(fragment=fragment):
+                self.assertIn(fragment, failure_branch)
+
+        forbidden_fragments = (
+            "--all-namespaces",
+            "kubectl get all",
+            "kubectl get secret",
+            "kubectl describe secret",
+            "kubectl config view",
+            "kubectl logs",
+            "printenv",
+            "-o yaml",
+        )
+        for fragment in forbidden_fragments:
+            with self.subTest(forbidden=fragment):
+                self.assertNotIn(fragment, failure_branch)
+
 
 if __name__ == "__main__":
     unittest.main()

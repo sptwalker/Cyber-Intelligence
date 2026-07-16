@@ -197,7 +197,52 @@ deploy_cce:
         -e "s|cyber-intelligence-collector:prod-latest|cyber-intelligence-collector:${IMAGE_TAG}|g"
         deploy/k8s/deployment.yaml | kubectl apply -f - -n nexus-prod
     - kubectl apply -f deploy/k8s/ingress.yaml -n nexus-prod
-    - kubectl rollout status deployment/cyber-intelligence -n nexus-prod --timeout=3m
+    - |
+      rollout_rc=0
+      kubectl rollout status deployment/cyber-intelligence -n nexus-prod --timeout=3m || rollout_rc=$?
+      if [ "$rollout_rc" -eq 0 ]; then
+        exit 0
+      fi
+
+      namespace=nexus-prod
+      deployment=cyber-intelligence
+      selector='app.kubernetes.io/name=cyber-intelligence'
+
+      echo "ERROR: rollout failed; collecting bounded Kubernetes diagnostics" >&2
+      echo "=== Deployment status ==="
+      kubectl get "deployment/$deployment" -n "$namespace" \
+        -o 'custom-columns=NAME:.metadata.name,GENERATION:.metadata.generation,OBSERVED:.status.observedGeneration,DESIRED:.spec.replicas,UPDATED:.status.updatedReplicas,READY:.status.readyReplicas,AVAILABLE:.status.availableReplicas,UNAVAILABLE:.status.unavailableReplicas' || true
+
+      echo "=== Deployment conditions ==="
+      printf 'TYPE\tSTATUS\tREASON\tMESSAGE\n'
+      kubectl get "deployment/$deployment" -n "$namespace" \
+        -o 'jsonpath={range .status.conditions[*]}{.type}{"\t"}{.status}{"\t"}{.reason}{"\t"}{.message}{"\n"}{end}' || true
+
+      echo "=== Newest matching pods (maximum 5) ==="
+      pod_names="$(kubectl get pods -n "$namespace" -l "$selector" \
+        --sort-by=.metadata.creationTimestamp -o name | tail -n 5)" || pod_names=""
+      if [ -z "$pod_names" ]; then
+        echo "No matching pods found (or pod listing failed)."
+      else
+        for pod in $pod_names; do
+          kubectl get "$pod" -n "$namespace" -o wide || true
+        done
+      fi
+
+      echo "=== Recent namespace events (maximum 40 lines) ==="
+      printf 'LAST SEEN\tTYPE\tREASON\tOBJECT\tMESSAGE\n'
+      kubectl get events -n "$namespace" --sort-by=.metadata.creationTimestamp --no-headers \
+        | tail -n 40 || true
+
+      if [ -n "$pod_names" ]; then
+        echo "=== Matching pod descriptions (maximum 220 lines each) ==="
+        for pod in $pod_names; do
+          echo "--- $pod ---"
+          kubectl describe "$pod" -n "$namespace" | sed -n '1,220p' || true
+        done
+      fi
+
+      exit "$rollout_rc"
 
 # ── notify (only after CCE deployment) ──────────────────────────────────────
 
