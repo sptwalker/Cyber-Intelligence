@@ -23,6 +23,8 @@ from . import login
 ALLOWED_PLATFORMS = frozenset(OPENCLI_SITE) | {"heimao"}
 ALLOWED_ENTRIES = frozenset({"search", "user-posts"})
 MAX_BODY_BYTES = 32 * 1024
+SELFCHECK_CONTRACT_VERSION = 1
+SELFCHECK_NATIVE_ID = "yuqing-collector-selfcheck-v1"
 
 
 class CollectorRequestError(ValueError):
@@ -92,6 +94,22 @@ def health_payload() -> dict:
     }
 
 
+def selfcheck_payload() -> dict:
+    """Return a deterministic item without touching a platform or login session."""
+    return {
+        "success": True,
+        "contract_version": SELFCHECK_CONTRACT_VERSION,
+        "item": {
+            "platform": "weibo",
+            "id": SELFCHECK_NATIVE_ID,
+            "text": "Yuqing collector readiness selfcheck",
+            "user": {"nickname": "collector-selfcheck"},
+            "created_at": "2026-01-01T00:00:00+08:00",
+            "url": "https://example.invalid/yuqing-collector-selfcheck-v1",
+        },
+    }
+
+
 class CollectorHandler(BaseHTTPRequestHandler):
     server_version = "YuqingCollector/1"
 
@@ -122,6 +140,9 @@ class CollectorHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
+        if parsed.path == "/v1/selfcheck":
+            self._json(selfcheck_payload())
+            return
         if parsed.path in {"/healthz", "/readyz"}:
             payload = health_payload()
             self._json(payload, 200 if parsed.path == "/healthz" or payload["ready"] else 503)

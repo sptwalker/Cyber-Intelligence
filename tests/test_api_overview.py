@@ -237,6 +237,40 @@ class OverviewHTTPTest(unittest.TestCase):
         self.assertTrue(payload["data"]["ready"])
         self.assertEqual(2, payload["data"]["schema_version"])
 
+    def test_readiness_requires_configured_collector_contract(self) -> None:
+        collector_result = {
+            "ready": True,
+            "contract_version": 1,
+            "platform": "weibo",
+            "native_id": "yuqing-collector-selfcheck-v1",
+            "doc_id": "a4088b49f41a0653",
+        }
+        with mock.patch.dict(
+            os.environ, {"YUQING_COLLECTOR_URL": "http://127.0.0.1:8788"}, clear=False,
+        ), mock.patch("yuqing.load_watch", return_value=WATCH), mock.patch(
+            "yuqing.collector_client.selfcheck", return_value=collector_result,
+        ) as selfcheck:
+            status, _, body = self.request(
+                "/api/v1/readiness", headers=self.remote_headers(authenticated=False),
+            )
+
+        payload = json.loads(body)
+        self.assertEqual(200, status)
+        self.assertEqual(collector_result, payload["data"]["collector"])
+        selfcheck.assert_called_once_with(timeout=5)
+
+        with mock.patch.dict(
+            os.environ, {"YUQING_COLLECTOR_URL": "http://127.0.0.1:8788"}, clear=False,
+        ), mock.patch("yuqing.load_watch", return_value=WATCH), mock.patch(
+            "yuqing.collector_client.selfcheck", side_effect=RuntimeError("contract mismatch"),
+        ):
+            status, _, body = self.request(
+                "/api/v1/readiness", headers=self.remote_headers(authenticated=False),
+            )
+
+        self.assertEqual(503, status)
+        self.assertEqual("NOT_READY", json.loads(body)["error"]["code"])
+
     def test_workbench_default_and_legacy_dashboards_remain_available_locally(self) -> None:
         local_headers = {"Host": "127.0.0.1:8000"}
         for path in ("/", "/v2"):

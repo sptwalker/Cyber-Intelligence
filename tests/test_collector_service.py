@@ -7,7 +7,7 @@ import os
 import unittest
 from unittest import mock
 
-from yuqing import collect, collector_client, login
+from yuqing import collect, collector_client, collector_service, login
 from yuqing.collector_service import CollectorRequestError, fetch_items, health_payload
 
 
@@ -37,6 +37,28 @@ class CollectorServiceTest(unittest.TestCase):
         self.assertTrue(payload["ready"])
         self.assertTrue(payload["opencli_available"])
         self.assertTrue(payload["browser_connected"])
+
+    def test_selfcheck_contract_round_trips_through_client_normalization(self) -> None:
+        payload = collector_service.selfcheck_payload()
+        handler = object.__new__(collector_service.CollectorHandler)
+        handler.path = "/v1/selfcheck"
+        handler._json = mock.Mock()
+        handler.do_GET()
+        handler._json.assert_called_once_with(payload)
+
+        with mock.patch.object(collector_client, "_request", return_value=payload):
+            result = collector_client.selfcheck()
+
+        self.assertTrue(result["ready"])
+        self.assertEqual(1, result["contract_version"])
+        self.assertEqual("weibo", result["platform"])
+        self.assertEqual("yuqing-collector-selfcheck-v1", result["native_id"])
+        self.assertEqual("a4088b49f41a0653", result["doc_id"])
+
+        invalid = {**payload, "contract_version": 2}
+        with mock.patch.object(collector_client, "_request", return_value=invalid):
+            with self.assertRaisesRegex(RuntimeError, "version mismatch"):
+                collector_client.selfcheck()
 
 
 class CollectorProxyTest(unittest.TestCase):

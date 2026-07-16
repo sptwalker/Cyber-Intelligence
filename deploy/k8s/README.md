@@ -46,7 +46,12 @@ cyber-intelligence-collector:${IMAGE_TAG}
 ```
 
 Deployment waits for both images and for the complete two-container pod rollout.
-OpenCLI and its Browser Bridge extension are pinned in `Dockerfile.collector`.
+The workbench readiness endpoint also consumes a deterministic Collector canary
+item through the localhost HTTP boundary and normalizes it with production code.
+This keeps the rollout pending if the independently built images disagree on the
+collector item contract. The canary does not contact a platform or write the
+production database. OpenCLI and its Browser Bridge extension are pinned in
+`Dockerfile.collector`.
 
 ## Runtime checks
 

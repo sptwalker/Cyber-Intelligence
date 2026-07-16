@@ -11,6 +11,10 @@ import urllib.request
 from typing import Any
 
 
+SELFCHECK_CONTRACT_VERSION = 1
+SELFCHECK_NATIVE_ID = "yuqing-collector-selfcheck-v1"
+
+
 def base_url() -> str:
     return os.getenv("YUQING_COLLECTOR_URL", "").strip().rstrip("/")
 
@@ -63,6 +67,32 @@ def health(*, timeout: int = 5) -> dict[str, Any]:
             "browser_connected": False,
             "message": str(exc),
         }
+
+
+def selfcheck(*, timeout: int = 5) -> dict[str, Any]:
+    """Verify the deployed collector item contract through normal normalization."""
+    payload = _request("/v1/selfcheck", timeout=timeout)
+    if payload.get("contract_version") != SELFCHECK_CONTRACT_VERSION:
+        raise RuntimeError("Collector selfcheck contract version mismatch")
+    item = payload.get("item")
+    if not isinstance(item, dict) or item.get("platform") != "weibo":
+        raise RuntimeError("Collector selfcheck item contract invalid")
+
+    from .collect import normalize
+
+    doc = normalize(
+        "weibo", "_collector_selfcheck", item,
+        backend="collector-selfcheck", fetched_at="2026-01-01T00:00:00+08:00",
+    )
+    if doc.native_id != SELFCHECK_NATIVE_ID or not doc.text:
+        raise RuntimeError("Collector selfcheck item normalization failed")
+    return {
+        "ready": True,
+        "contract_version": SELFCHECK_CONTRACT_VERSION,
+        "platform": doc.platform,
+        "native_id": doc.native_id,
+        "doc_id": doc.doc_id,
+    }
 
 
 def fetch(

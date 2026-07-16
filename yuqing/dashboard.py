@@ -1468,6 +1468,7 @@ def make_handler(db: str):
             if u.path == "/api/v1/readiness":
                 try:
                     from . import load_watch
+                    from . import collector_client
                     watch = load_watch()
                     store = Store(db)
                     try:
@@ -1477,11 +1478,18 @@ def make_handler(db: str):
                         store.close()
                     if schema_version != 2 or not (_WORKBENCH_DIR / "index.html").is_file():
                         raise RuntimeError("delivery baseline unavailable")
+                    collector = (
+                        collector_client.selfcheck(timeout=5)
+                        if collector_client.enabled() else None
+                    )
                 except Exception:
                     self._send_api_error("NOT_READY", "服务尚未就绪", 503)
                     return
+                readiness = {"ready": True, "schema_version": schema_version}
+                if collector is not None:
+                    readiness["collector"] = collector
                 self._send_json(success_payload(
-                    {"ready": True, "schema_version": schema_version},
+                    readiness,
                     entity_id=data["entity"]["id"], data_quality=quality,
                     quality_notes=notes,
                 ))
