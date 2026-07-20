@@ -8,7 +8,8 @@ from typing import Any
 from .. import analytics
 from ..report import aggregate
 from .collection import latest_platform_runs
-from .overview import RANGES, cutoff_day, filter_range, resolve_entity
+from .entities import resolve_entity
+from .overview import RANGES, cutoff_day, filter_range
 from .responses import APIError
 
 

@@ -7,7 +7,8 @@ from typing import Any
 
 from .. import insights
 from .collection import latest_platform_runs
-from .overview import RANGES, cutoff_day, resolve_entity
+from .entities import resolve_entity
+from .overview import RANGES, cutoff_day
 from .responses import APIError
 
 

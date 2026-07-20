@@ -6,7 +6,7 @@ from __future__ import annotations
 from typing import Any
 
 from .collection import latest_platform_runs
-from .overview import resolve_entity
+from .entities import resolve_entity
 from .responses import APIError
 
 TRANSITIONS = {

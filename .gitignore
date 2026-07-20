@@ -20,3 +20,8 @@ yuqing_config.json
 docs/apiKey-*.csv
 *.bak
 .tmp-agent/
+
+# Graphify: commit the project integration and generator, not local graphs/caches.
+graphify-out/
+graphify-runtime/
+.codex/hooks.json

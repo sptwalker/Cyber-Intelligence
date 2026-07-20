@@ -72,7 +72,8 @@ watch.yaml → collect(opencli登录态,混合,全部aliases) → SQLite(raw_obs
 
 | 模块 | 职责 |
 |---|---|
-| `collect.py` | 采集+归一化，登录态桥/字段映射/增量水位/健康三态 |
+| `collect.py` | 采集编排，登录态桥/增量水位/健康三态 |
+| `normalization.py` | Collector/opencli 原始字段归一化为稳定 `CleanDoc` 契约 |
 | `store.py` | SQLite 分层 + 统一 doc_id 契约 + 幂等去重 |
 | `analyze.py` | 情绪/ABSA/信息抽取（规则 stub + Claude tool use），evidence 逐字校验 |
 | `score.py` | 线性加权风险分（平台×情绪×危机×影响力，可解释） |
@@ -80,9 +81,26 @@ watch.yaml → collect(opencli登录态,混合,全部aliases) → SQLite(raw_obs
 | `analytics.py` | 稳健 z-score 异常 / ABSA 聚合 / 上升话题 |
 | `report.py` | 周报生成（数字注入 + 引用校验器）+ 飞书推送 + SOV |
 | `insights.py` | 老板日报 / AI 问答 / 诉求→需求 / 事件时间线 |
-| `dashboard.py` | stdlib 只读看板（健康/趋势/负面Top/报告） |
+| `dashboard.py` | 看板兼容门面、OAuth/会话策略和服务启动入口 |
+| `dashboard_http.py` | stdlib HTTP 适配、静态资源、旧接口和登录流程 |
+| `dashboard_api_v1.py` | `/api/v1/*` 路由编排，调用各领域 API 模块 |
+| `dashboard_views.py` | 旧版 HTML 页面渲染与图表数据组装 |
+| `dashboard_runtime.py` | 单机后台跑批状态、互斥启动和协作式停止 |
 | `health.py` `budget.py` | 数据健康三态 / 成本配额熔断 |
 | `selfcheck.py` | 端到端离线自检（是改代码后的验收基准） |
+
+### Graphify 架构图
+
+项目内置 Graphify 技能和运行时图生成脚本。`graphify-out/`、`graphify-runtime/`
+属于本地生成产物，不提交仓库。安装 Graphify 后可重新生成：
+
+```bash
+graphify update .
+"$(sed -n '1p' graphify-out/.graphify_python)" scripts/build_runtime_graph.py
+```
+
+生成结果中，`graphify-runtime/graph.html` 是模块级有向依赖图，
+`graphify-runtime/callgraph.html` 是函数级调用图。
 
 ## 路线图（详见设计文档第十章）
 

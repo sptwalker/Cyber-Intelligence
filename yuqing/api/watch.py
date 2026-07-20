@@ -15,7 +15,8 @@ import yaml
 
 from .. import analytics, watch_path
 from ..keywords import KeywordManager, TAGS
-from .overview import configured_entities, resolve_entity
+from ..watch_config import validate_watch
+from .entities import configured_entities, resolve_entity
 from .responses import APIError
 
 
@@ -107,8 +108,7 @@ def update_watch_config(
             )
 
     text = yaml.safe_dump(updated, allow_unicode=True, sort_keys=False, width=120)
-    from ..dashboard import _validate_watch
-    valid, message = _validate_watch(text)
+    valid, message = validate_watch(text)
     if not valid:
         raise APIError("INVALID_WATCH", message)
 

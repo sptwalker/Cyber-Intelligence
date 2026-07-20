@@ -9,7 +9,7 @@ import datetime as _dt
 from typing import Any, Callable
 
 from ..collect import _OPENCLI
-from .overview import resolve_entity
+from .entities import resolve_entity
 
 _HEALTH_ORDER = {"unknown": -1, "ok": 0, "suspect": 1, "fail": 2}
 _LOGIN_REQUIRED = {"weibo", "zhihu", "xiaohongshu", "douyin", "bilibili", "heimao"}

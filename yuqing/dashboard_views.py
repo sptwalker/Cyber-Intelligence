@@ -1,0 +1,961 @@
+# -*- coding: utf-8 -*-
+"""Legacy dashboard HTML renderers and chart payload builders."""
+
+from __future__ import annotations
+
+import html
+import json
+import re
+
+from .store import Store
+
+_CSS = """
+body{font:14px/1.5 -apple-system,Segoe UI,Microsoft YaHei,sans-serif;max-width:1000px;margin:24px auto;padding:0 16px;color:#1f2328}
+h1{font-size:20px} h2{font-size:16px;margin-top:28px;border-bottom:1px solid #d0d7de;padding-bottom:4px}
+table{border-collapse:collapse;width:100%;margin:8px 0} th,td{border:1px solid #d0d7de;padding:6px 8px;text-align:left;vertical-align:top}
+th{background:#f6f8fa} a{color:#0969da;text-decoration:none} a:hover{text-decoration:underline}
+.badge{padding:1px 8px;border-radius:10px;color:#fff;font-size:12px;white-space:nowrap}
+.ok{background:#1a7f37} .suspect{background:#9a6700} .fail{background:#cf222e}
+.muted{color:#656d76;font-size:12px} pre{white-space:pre-wrap;background:#f6f8fa;padding:12px;border-radius:6px;overflow:auto}
+.spin{display:inline-block;width:14px;height:14px;border:2px solid #d0d7de;border-top-color:#0969da;border-radius:50%;animation:spin .8s linear infinite;vertical-align:-2px;margin-right:6px}
+@keyframes spin{to{transform:rotate(360deg)}}
+"""
+
+_STATE_CN = {"ok": "正常", "suspect": "存疑", "fail": "失败"}
+
+
+def _safe_href(url: str) -> str:
+    """href 双重防护：先限 http(s)/相对(挡 javascript:)，再 html.escape(挡引号闭合属性突破 XSS)。
+
+    抓来的帖子 URL 不可信——只 scheme-check 挡不住 http://x/'><img onerror=...> 这种属性突破。
+    """
+    u = (url or "").strip()
+    if not u.startswith(("http://", "https://", "/")):
+        return "#"
+    return html.escape(u, quote=True)
+
+
+def _badge(state: str) -> str:
+    cls = state if state in ("ok", "suspect", "fail") else "muted"
+    return f'<span class="badge {cls}">{_STATE_CN.get(state, state)}</span>'
+
+
+def _page(title: str, body: str) -> str:
+    return (f"<!doctype html><html lang=zh><head><meta charset=utf-8>"
+            f"<meta name=viewport content='width=device-width,initial-scale=1'>"
+            f"<title>{html.escape(title)}</title><style>{_CSS}</style></head><body>{body}</body></html>")
+
+
+def render_index(store: Store) -> str:
+    conn = store.conn
+
+    # 1) 采集健康：每个平台取最近一次运行状态
+    latest: dict[str, dict] = {}
+    for r in conn.execute("SELECT platform,health,status,n_fetched,ts,note FROM run_log ORDER BY ts DESC"):
+        latest.setdefault(r["platform"], dict(r))
+    health_rows = "".join(
+        f"<tr><td>{html.escape(p)}</td><td>{_badge(v['health'])}</td>"
+        f"<td>{v['n_fetched']}</td><td class=muted>{html.escape(v['ts'])}</td>"
+        f"<td class=muted>{html.escape(v['note'] or '')}</td></tr>"
+        for p, v in sorted(latest.items())
+    ) or "<tr><td colspan=5 class=muted>暂无采集记录</td></tr>"
+    any_bad = any(v["health"] != "ok" for v in latest.values())
+    banner = ("<p style='color:#cf222e;font-weight:600'>⚠️ 有平台采集异常，下方报告数据可能不全，请人工核查。</p>"
+              if any_bad else "")
+    pending = store.pending_review_count()
+    review_line = (f"<p class=muted>📋 待人工复核 <b>{pending}</b> 条"
+                   f"（<code>python -m yuqing.cli review</code>）</p>" if pending else "")
+    pending_incidents = len(store.list_incidents(status="pending_confirmation", limit=1000))
+    incident_line = (f"<p style='color:#cf222e;font-weight:600'>🚨 待确认危机事件 <b>{pending_incidents}</b> 条 "
+                     f"（<code>python -m yuqing.cli incidents pending_confirmation</code>）</p>"
+                     if pending_incidents else "")
+    annotated = store.annotated_count()
+    annotate_line = (f"<p class=muted>📝 已标注 <b>{annotated}</b> 条 · "
+                     f"<a href='/annotate'>去标注</a></p>")
+    # 多维标签分布（Phase C：主体×立场，读 features.signals）
+    from collections import Counter as _Ctr
+    subj_c, stance_c = _Ctr(), _Ctr()
+    for row in conn.execute("SELECT signals FROM features WHERE signals LIKE '%stance%'"):
+        try:
+            sg = json.loads(row["signals"])
+            if sg.get("subject"):
+                subj_c[sg["subject"]] += 1
+            if sg.get("stance"):
+                stance_c[sg["stance"]] += 1
+        except Exception:
+            pass
+    if stance_c:
+        dist = ("<p class=muted>🏷️ 主体：" + " · ".join(f"{k} {v}" for k, v in subj_c.most_common())
+                + "　｜　立场：" + " · ".join(f"{k} {v}" for k, v in stance_c.most_common()) + "</p>")
+    else:
+        dist = "<p class=muted>🏷️ 多维标签：暂无（标注样本后重跑分析生效）</p>"
+    dist_line = incident_line + annotate_line + dist
+    from . import config as _cfg
+    _m = _cfg.mode()
+    _mode_label = "训练 training" if _m == "training" else "日常 daily"
+    _mode_hint = "跑批不推飞书，适合调参/标注期" if _m == "training" else "跑批推报告到飞书"
+
+    # 2) 负面日趋势（按 fetched_at 天，实时算，text bar）
+    trend = conn.execute(
+        "SELECT substr(c.fetched_at,1,10) day, "
+        "SUM(CASE WHEN f.polarity='neg' THEN 1 ELSE 0 END) neg, COUNT(*) total "
+        "FROM clean c JOIN features f USING(doc_id) GROUP BY day ORDER BY day"
+    ).fetchall()
+    peak = max((r["neg"] for r in trend), default=0) or 1
+    trend_rows = "".join(
+        f"<tr><td class=muted>{html.escape(r['day'] or '')}</td><td>{r['neg']}</td>"
+        f"<td>{r['total']}</td><td>{'█' * round(20 * r['neg'] / peak)}</td></tr>"
+        for r in trend) or "<tr><td colspan=4 class=muted>暂无数据</td></tr>"
+
+    # 3) 报告历史
+    report_rows = "".join(
+        f"<tr><td><a href='/report?run_id={html.escape(r['run_id'])}'>{html.escape(r['run_id'])}</a></td>"
+        f"<td class=muted>{html.escape(r['created_at'])}</td></tr>"
+        for r in conn.execute("SELECT run_id,created_at FROM reports ORDER BY created_at DESC LIMIT 50")
+    ) or "<tr><td colspan=2 class=muted>暂无报告</td></tr>"
+
+    # 4) 负面 Top（跨全部实体，按风险分）
+    neg_rows = "".join(
+        f"<tr><td>{i}</td><td>{html.escape(r['platform'])}</td><td>{r['risk']}</td>"
+        f"<td>{html.escape((r['text'] or '')[:50])}</td>"
+        f"<td><a href='{_safe_href(r['url'])}' target=_blank rel=noopener>原帖</a> "
+        f"<span class=muted>{html.escape(r['doc_id'])}</span></td></tr>"
+        for i, r in enumerate(conn.execute(
+            "SELECT c.platform,c.text,c.url,c.doc_id,f.risk FROM clean c JOIN features f USING(doc_id)"
+            " WHERE f.polarity='neg' ORDER BY f.risk DESC LIMIT 20"), 1)
+    ) or "<tr><td colspan=5 class=muted>暂无负面</td></tr>"
+
+    body = (
+        "<h1>舆情监控看板 <span class=muted>（数据只读）</span> "
+        "<a href='/login' style='font-size:14px'>🔐 登录与采集</a> "
+        "<a href='/annotate' style='font-size:14px'>📝 标注</a> "
+        "<a href='/watch' style='font-size:14px'>🎯 监控配置</a> "
+        "<a href='/keywords' style='font-size:14px'>📖 关键词库</a> "
+        "<a href='/exec' style='font-size:14px'>📊 高管概览</a> "
+        "<a href='/dash' style='font-size:14px'>📈 战情室</a> "
+        "<a href='/config' style='font-size:14px'>⚙️ 系统配置</a></h1>" + banner + review_line + dist_line +
+        f"<p class=muted>运行模式：<b>{_mode_label}</b>（{_mode_hint}）</p>" +
+        "<h2>采集健康（各平台最近一次）</h2>"
+        "<table><tr><th>平台</th><th>状态</th><th>条数</th><th>时间</th><th>备注</th></tr>"
+        + health_rows + "</table>"
+        "<h2>负面日趋势</h2><table><tr><th>日期</th><th>负面</th><th>总量</th><th></th></tr>"
+        + trend_rows + "</table>"
+        "<h2>报告历史</h2><table><tr><th>run_id</th><th>生成时间</th></tr>" + report_rows + "</table>"
+        "<h2>负面 Top（按风险分）</h2>"
+        "<table><tr><th>#</th><th>平台</th><th>风险</th><th>摘要</th><th>溯源</th></tr>"
+        + neg_rows + "</table>"
+    )
+    return _page("舆情监控看板", body)
+
+
+_LINK = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
+_BOLD = re.compile(r"\*\*([^*]+)\*\*")
+
+
+def _inline(s: str) -> str:
+    """行内 markdown → HTML：先转义防 XSS，再还原 链接/粗体。href 仅允许 http(s)/相对路径。"""
+    s = html.escape(s)
+    def _lk(m):
+        text, url = m.group(1), m.group(2)
+        if url.startswith(("http://", "https://", "/")):   # 挡 javascript: 等，非法链接只留文字
+            return f"<a href='{url}' target=_blank rel=noopener>{text}</a>"
+        return text
+    s = _LINK.sub(_lk, s)
+    s = _BOLD.sub(r"<strong>\1</strong>", s)
+    return s
+
+
+def _md_table(rows: list) -> str:
+    def cells(r): return [c.strip() for c in r.strip().strip("|").split("|")]
+    def is_sep(r): return set(r.replace("|", "").strip()) <= set("-: ") and "-" in r
+    header = cells(rows[0])
+    th = "".join(f"<th>{_inline(c)}</th>" for c in header)
+    body = "".join("<tr>" + "".join(f"<td>{_inline(c)}</td>" for c in cells(r)) + "</tr>"
+                   for r in rows[1:] if not is_sep(r))
+    return f"<table><tr>{th}</tr>{body}</table>"
+
+
+def md_to_html(md: str) -> str:
+    """把本系统生成的报告 markdown 渲染成 HTML（针对固定子集：# ## > | --- ** []()）。"""
+    lines, out, i = md.split("\n"), [], 0
+    while i < len(lines):
+        st = lines[i].strip()
+        if not st:
+            i += 1; continue
+        if st.startswith("## "):
+            out.append(f"<h2>{_inline(st[3:])}</h2>")
+        elif st.startswith("# "):
+            out.append(f"<h1>{_inline(st[2:])}</h1>")
+        elif st.startswith(">"):
+            out.append(f"<blockquote>{_inline(st.lstrip('> '))}</blockquote>")
+        elif st.startswith("---"):
+            out.append("<hr>")
+        elif st.startswith("|"):
+            block = []
+            while i < len(lines) and lines[i].strip().startswith("|"):
+                block.append(lines[i].strip()); i += 1
+            out.append(_md_table(block)); continue
+        else:
+            out.append(f"<p>{_inline(st)}</p>")
+        i += 1
+    return "\n".join(out)
+
+
+def chart_data(store: Store, entity_id: str, watch: dict | None = None) -> dict:
+    """图表页数据(纯JSON,供 Chart.js fetch)：情绪/声量趋势、方面口碑、话题、SOV、BHI趋势。"""
+    from . import analytics
+    from .report import aggregate, sov as sov_fn
+    ser = analytics.daily_series(store, entity_id)
+    ab = analytics.aspect_breakdown(store, entity_id)
+    m = aggregate(store, entity_id)
+    bh = analytics.brand_health(store, entity_id)
+    data = {
+        "days": [d["day"] for d in ser],
+        "sentiment": {"pos": [d["pos"] for d in ser], "neg": [d["neg"] for d in ser],
+                      "neu": [d["neu"] for d in ser]},
+        "mention": [d["mention"] for d in ser],
+        "bhi_trend": analytics.bhi_trend(store, entity_id),
+        "aspects": [{"aspect": a["aspect"], "neg_ratio": round(a["neg_ratio"], 3), "n": a["n"]} for a in ab],
+        "topics": [{"topic": t, "count": c} for t, c in m["top_topics"]],
+        "semantic_topics": [{"size": t["size"], "sample": t["sample"], "platforms": t["platforms"]}
+                            for t in analytics.semantic_topics(store, entity_id)[:8]],
+        "bhi": bh.get("bhi"), "label": bh.get("label"),
+        "platform": [{"platform": p, "total": v["total"], "neg": v["neg"]}
+                     for p, v in m["by_platform"].items()],
+    }
+    if watch and any(e.get("type") == "competitor" for e in watch.get("entities", [])):
+        data["sov"] = [{"name": r["name"], "mentions": r["mentions"], "type": r["type"]}
+                       for r in sov_fn(store, watch)]
+    data["kol"] = [{"author": k["author"], "platform": k["platform"], "followers": k["followers"],
+                    "posts": k["posts"], "stance": k["stance"], "mention": k["mention"],
+                    "url": k["url"], "sample": k["sample"]}
+                   for k in analytics.kol_ranking(store, entity_id, limit=10)]
+    data["clusters"] = analytics.suspicious_clusters(store, entity_id)
+    return data
+
+
+def _self_entities(watch: dict) -> list[tuple[str, str]]:
+    return [(e["id"], (e.get("aliases") or [e["id"]])[0])
+            for e in watch.get("entities", []) if e.get("type", "self") == "self"]
+
+
+def render_dash(store: Store, entity_id: str, watch: dict | None = None) -> str:
+    """中层战情室：Chart.js 渲染 情绪趋势/声量/方面雷达/话题/SOV。数据走 /chart-data 端点。"""
+    from . import load_watch
+    if watch is None:
+        try:
+            watch = load_watch()
+        except SystemExit:
+            watch = {"platforms": [], "entities": []}
+    selfs = _self_entities(watch)
+    valid_ids = {eid for eid, _ in selfs} | {e["id"] for e in watch.get("entities", [])}
+    if entity_id not in valid_ids:                # entity 来自 query param，只接受已知实体(防反射注入)
+        entity_id = selfs[0][0] if selfs else ""
+    tabs = " ".join(f"<a href='/dash?entity={html.escape(eid)}'>"
+                    f"{'<b>' if eid == entity_id else ''}{html.escape(nm)}{'</b>' if eid == entity_id else ''}</a>"
+                    for eid, nm in selfs)
+    eid_js = json.dumps(entity_id).replace("</", "<\\/")   # 防 </script> 提前闭合(纵深防御)
+    # KOL 榜 + 异常账号簇（服务端渲染表格，非图表）
+    from . import analytics
+    kols = analytics.kol_ranking(store, entity_id, limit=10)
+    kol_rows = "".join(
+        f"<tr><td>{html.escape(k['author'])}</td><td>{html.escape(k['platform'])}</td>"
+        f"<td>{k['followers'] or '—'}</td><td>{k['posts']}</td>"
+        f"<td>{k['stance']}</td><td>{k['mention']}</td>"
+        f"<td><a href='{_safe_href(k['url'])}' target=_blank rel=noopener>{html.escape(k['sample'])}</a></td></tr>"
+        for k in kols) or "<tr><td colspan=7 class=muted>暂无</td></tr>"
+    clus = analytics.suspicious_clusters(store, entity_id)
+    clus_rows = "".join(
+        f"<tr><td>{c['n_authors']}</td><td>{c['n_docs']}</td><td>{html.escape('、'.join(c['platforms']))}</td>"
+        f"<td>{html.escape(c['sample'])}</td></tr>" for c in clus) or \
+        "<tr><td colspan=4 class=muted>未发现同质化账号簇</td></tr>"
+    body = f"""<h1>战情室看板 <a href='/' style='font-size:14px'>← 详情</a> <a href='/exec' style='font-size:14px'>高管概览</a></h1>
+<p>监控对象：{tabs or '(watch.yaml 无自有实体)'}</p>
+<div style='display:grid;grid-template-columns:1fr 1fr;gap:20px'>
+  <div><h2>情绪趋势</h2><canvas id=c_sent height=180></canvas></div>
+  <div><h2>声量当量趋势</h2><canvas id=c_ment height=180></canvas></div>
+  <div><h2>品牌健康指数 BHI 趋势</h2><canvas id=c_bhi height=180></canvas></div>
+  <div><h2>方面口碑（负面占比）</h2><canvas id=c_asp height=180></canvas></div>
+  <div><h2>负面话题分布</h2><canvas id=c_top height=180></canvas></div>
+  <div><h2>竞品声量份额</h2><canvas id=c_sov height=180></canvas></div>
+</div>
+<p class=muted>数据：公开渠道抽样，按发布日聚合。声量当量=跨平台可比声量(平台权重×影响力)。</p>
+<h2>KOL / 影响力榜（按声量当量）</h2>
+<table><tr><th>作者</th><th>平台</th><th>粉丝</th><th>发帖</th><th>立场</th><th>声量当量</th><th>代表内容</th></tr>{kol_rows}</table>
+<h2>疑似异常账号簇（同质文案跨多账号）</h2>
+<table><tr><th>账号数</th><th>帖数</th><th>平台</th><th>样例</th></tr>{clus_rows}</table>
+<p class=muted>异常簇=同一内容被多个不同账号发布，疑似水军/搬运/控评，仅作嫌疑提示需人工核实。</p>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<script>
+fetch('/chart-data?entity='+encodeURIComponent({eid_js})).then(r=>r.json()).then(d=>{{
+  const mk=(id,cfg)=>{{const el=document.getElementById(id);if(el&&d.days!==undefined)new Chart(el,cfg);}};
+  const NEG='#cf4b2b',POS='#1a7f6b',NEU='#9aa0a6',BLUE='#2f6fd0';
+  mk('c_sent',{{type:'line',data:{{labels:d.days,datasets:[
+    {{label:'正',data:d.sentiment.pos,borderColor:POS,tension:.3}},
+    {{label:'负',data:d.sentiment.neg,borderColor:NEG,tension:.3}},
+    {{label:'中',data:d.sentiment.neu,borderColor:NEU,tension:.3}}]}}}});
+  mk('c_ment',{{type:'line',data:{{labels:d.days,datasets:[{{label:'声量当量',data:d.mention,borderColor:BLUE,fill:true,backgroundColor:'rgba(47,111,208,.1)',tension:.3}}]}}}});
+  mk('c_bhi',{{type:'line',data:{{labels:(d.bhi_trend||[]).map(x=>x.day),datasets:[{{label:'BHI',data:(d.bhi_trend||[]).map(x=>x.bhi),borderColor:'#7048e8',tension:.3}}]}},options:{{scales:{{y:{{min:0,max:100}}}}}}}});
+  if(d.aspects&&d.aspects.length)mk('c_asp',{{type:'radar',data:{{labels:d.aspects.map(a=>a.aspect),datasets:[{{label:'负面占比',data:d.aspects.map(a=>a.neg_ratio),borderColor:NEG,backgroundColor:'rgba(207,75,43,.2)'}}]}},options:{{scales:{{r:{{min:0,max:1}}}}}}}});
+  if(d.topics&&d.topics.length)mk('c_top',{{type:'bar',data:{{labels:d.topics.map(t=>t.topic),datasets:[{{label:'负面条数',data:d.topics.map(t=>t.count),backgroundColor:NEG}}]}}}});
+  if(d.sov&&d.sov.length)mk('c_sov',{{type:'doughnut',data:{{labels:d.sov.map(s=>s.name),datasets:[{{data:d.sov.map(s=>s.mentions),backgroundColor:['#2f6fd0','#cf4b2b','#9a6700','#1a7f6b','#7048e8']}}]}}}});
+}});
+</script>"""
+    return _page("战情室看板", body)
+
+
+def render_exec(store: Store, watch: dict | None = None) -> str:
+    """高管一屏概览：BHI 大数字 · 数据健康灯 · 关键结论 · 最该看的一件事 · 竞品SOV。"""
+    from . import load_watch, analytics
+    from .report import sov as sov_fn, aggregate
+    if watch is None:
+        try:
+            watch = load_watch()
+        except SystemExit:
+            watch = {"platforms": [], "entities": []}
+    ents = watch.get("entities", [])
+    latest: dict[str, str] = {}
+    for r in store.conn.execute("SELECT platform, health FROM run_log ORDER BY ts DESC"):
+        latest.setdefault(r["platform"], r["health"])
+    lamp = ("#cf222e", "危机/采集异常") if any(v == "fail" for v in latest.values()) else \
+           ("#9a6700", "存疑") if any(v != "ok" for v in latest.values()) else ("#1a7f37", "正常")
+    p = [f"<h1>高管一屏概览 <a href='/' style='font-size:14px'>← 详情看板</a></h1>",
+         f"<p>数据健康灯：<b style='color:{lamp[0]}'>● {lamp[1]}</b> "
+         f"<span class=muted>（{'、'.join(f'{k}:{_STATE_CN.get(v, v)}' for k, v in sorted(latest.items())) or '暂无采集'}）</span></p>"]
+    _col = {"健康": "#1a7f37", "关注": "#9a6700", "预警": "#bc4c00", "危机": "#cf222e"}
+    for e in [x for x in ents if x.get("type", "self") == "self"]:
+        name = (e.get("aliases") or [e["id"]])[0]
+        bh = analytics.brand_health(store, e["id"])
+        p.append(f"<h2>{html.escape(name)}</h2>")
+        if bh["bhi"] is None:
+            p.append("<p class=muted>暂无数据</p>")
+            continue
+        c = bh["components"]
+        p.append(f"<div style='display:flex;align-items:center;gap:24px;margin:8px 0'>"
+                 f"<div style='font-size:56px;font-weight:800;color:{_col[bh['label']]};line-height:1'>{bh['bhi']}"
+                 f"<span style='font-size:18px;color:#656d76'> /100</span></div>"
+                 f"<div><b style='color:{_col[bh['label']]};font-size:18px'>{bh['label']}</b><br>"
+                 f"<span class=muted>情绪{c['sentiment']} · 声量{c['volume']} · 危机{c['crisis']} · 方面{c['aspect']}</span></div></div>")
+        m = aggregate(store, e["id"])
+        concl = [f"本期声量 {m['n_total']} 条，负面 {m['n_neg']}（{m['neg_ratio']:.0%}）"]
+        if m["top_topics"]:
+            concl.append(f"最需关注话题：「{m['top_topics'][0][0]}」（{m['top_topics'][0][1]} 条负面）")
+        if bh["crisis_neg"]:
+            concl.append(f"⚠️ 有 {bh['crisis_neg']} 条命中危机词，需人工核实")
+        p.append("<b>关键结论</b><ul>" + "".join(f"<li>{html.escape(x)}</li>" for x in concl) + "</ul>")
+        if m["top_neg"]:
+            t = m["top_neg"][0]
+            p.append(f"<p><b>最该看的一件事：</b>[{html.escape(t['platform'])}] 风险{t['risk']} · "
+                     f"<a href='{_safe_href(t['url'])}' target=_blank rel=noopener>{html.escape((t['summary'] or '')[:44])}</a></p>")
+    if any(x.get("type") == "competitor" for x in ents):
+        rows = sov_fn(store, watch)
+        p.append("<h2>竞品声量对标（SOV）</h2><table><tr><th>对象</th><th>类型</th><th>声量</th><th>份额</th><th>净情绪</th></tr>"
+                 + "".join(f"<tr><td>{html.escape(r['name'])}</td><td>{'自有' if r['type']=='self' else '竞品'}</td>"
+                          f"<td>{r['mentions']}</td><td>{r['sov']:.0%}</td><td>{r['nsr']:+.2f}</td></tr>" for r in rows)
+                 + "</table>")
+    p.append("<p class=muted>BHI=品牌健康指数(0-100,均衡型:情绪/声量/危机/方面)。公开渠道抽样，仅供趋势参考。</p>")
+    return _page("高管一屏概览", "".join(p))
+
+
+def render_report(store: Store, run_id: str) -> str:
+    row = store.conn.execute("SELECT markdown FROM reports WHERE run_id=?", (run_id,)).fetchone()
+    if not row:
+        return _page("未找到", "<p>未找到该报告。<a href='/'>返回</a></p>")
+    return _page(run_id, f"<p><a href='/'>← 返回看板</a></p>{md_to_html(row['markdown'])}")
+
+
+def render_keywords(store: Store, query_params: dict) -> str:
+    """关键词库管理页面"""
+    from .keywords import KeywordManager, TAGS
+
+    km = KeywordManager(store)
+
+    # 实体列表来自监控配置 watch.yaml（词库规划先于采集，故不从 clean 表推断）
+    from . import load_watch
+    try:
+        entities = [(e["id"], (e.get("aliases") or [e["id"]])[0]) for e in load_watch().get("entities", [])]
+    except SystemExit:                                           # 缺 PyYAML/配置时兜底
+        entities = []
+    if not entities:                                             # 配置读不到，退回已采集数据里的实体
+        entities = [(r[0], r[0]) for r in store.conn.execute(
+            'SELECT DISTINCT entity_id FROM clean WHERE entity_id IS NOT NULL').fetchall()]
+    entity_ids = [eid for eid, _ in entities]
+    current_entity = query_params.get('entity', [entity_ids[0] if entity_ids else None])[0]
+    current_tag = query_params.get('tag', [''])[0]
+
+    # 实体选择器
+    entity_options = ''.join(
+        f"<option value='{html.escape(eid)}' {'selected' if eid==current_entity else ''}>{html.escape(label)}</option>"
+        for eid, label in entities)
+    entity_select = f"<select id='entitySelect' onchange='location.href=\"/keywords?entity=\"+this.value'>{entity_options}</select>" if entities else "<span class=muted>无实体</span>"
+
+    # 标签筛选（内置 8 类 + 该实体已用的自定义标签）
+    custom_tags = [r[0] for r in store.conn.execute(
+        'SELECT DISTINCT tag FROM keywords WHERE entity_id IS ? ORDER BY tag', (current_entity,)).fetchall()
+        if r[0] not in TAGS]
+    tag_filters = "<a href='/keywords?entity={}&tag='>全部</a>".format(current_entity or '')
+    for tag_code, tag_name in list(TAGS.items()) + [(t, t) for t in custom_tags]:
+        active = ' style="font-weight:bold"' if tag_code == current_tag else ''
+        tag_filters += f" <a href='/keywords?entity={current_entity or ''}&tag={html.escape(tag_code)}'{active}>{html.escape(tag_name)}</a>"
+
+    # 获取关键词列表
+    keywords = km.list(tag=current_tag if current_tag else None, entity_id=current_entity)
+
+    # 关键词表格
+    kw_rows = ""
+    for kw in keywords:
+        tag_label = TAGS.get(kw['tag'], kw['tag'])
+        source_label = '🤖AI' if kw['source'] == 'auto' else '👤人工'
+        note_display = html.escape(kw['note'] or '')[:30] if kw['note'] else '-'
+        kw_rows += f"""<tr>
+            <td><input type='checkbox' class='rowchk' data-word="{html.escape(kw['word'])}" data-tag="{kw['tag']}"></td>
+            <td>{html.escape(kw['word'])}</td>
+            <td><span class='badge' style='background:#6e7781'>{tag_label}</span></td>
+            <td>{kw['weight']:.2f}</td>
+            <td>{source_label}</td>
+            <td class=muted>{note_display}</td>
+        </tr>"""
+
+    if not kw_rows:
+        kw_rows = "<tr><td colspan='6' class=muted>暂无关键词</td></tr>"
+
+    # AI推荐列表
+    suggestions = km.list_suggestions(status='pending', entity_id=current_entity, exclude_tag='seed_alias')
+    sug_rows = ""
+    for sug in suggestions[:10]:
+        tag_label = TAGS.get(sug['suggested_tag'], sug['suggested_tag'])
+        reason = html.escape(sug['reason'] or '')[:50]
+        sug_rows += f"""<tr>
+            <td>{html.escape(sug['word'])}</td>
+            <td><span class='badge' style='background:#0969da'>{tag_label}</span></td>
+            <td>{sug['score']:.2f}</td>
+            <td class=muted>{reason}</td>
+            <td>
+                <button onclick='approveSuggestion({sug["id"]})' style='background:#1a7f37;color:white;border:none;padding:4px 8px;border-radius:4px;cursor:pointer'>批准</button>
+                <button onclick='rejectSuggestion({sug["id"]})' style='background:#cf222e;color:white;border:none;padding:4px 8px;border-radius:4px;cursor:pointer'>拒绝</button>
+            </td>
+        </tr>"""
+
+    if not sug_rows:
+        sug_rows = "<tr><td colspan='5' class=muted>暂无推荐</td></tr>"
+
+    # 标签选项
+    tag_options = ''.join(f"<option value='{code}'>{name}</option>" for code, name in TAGS.items())
+
+    body = f"""
+<h1>关键词库管理</h1>
+<p><a href='/'>← 返回看板</a> ｜ <a href='/login'>登录与采集</a></p>
+
+<div style='margin:20px 0;padding:15px;background:#f6f8fa;border-radius:6px'>
+    <strong>选择实体：</strong> {entity_select}
+    <button onclick='runAnalysis()' id='runBtn' style='margin-left:20px;background:#0969da;color:white;border:none;padding:6px 14px;border-radius:6px;cursor:pointer'>▶ 运行分析</button>
+    <span id='runStatus' class=muted style='margin-left:10px'></span>
+</div>
+
+<div id='addForm' style='display:none;margin:20px 0;padding:15px;background:#fff;border:2px solid #0969da;border-radius:6px'>
+    <h3>添加关键词</h3>
+    <form onsubmit='return addKeyword(event)'>
+        <table style='border:none'>
+            <tr><td>词：</td><td><input type='text' id='word' required style='width:200px'></td></tr>
+            <tr><td>标签：</td><td>
+                <select id='tag' style='width:200px'>{tag_options}</select>
+                <input type='text' id='customTag' maxlength='20' placeholder='或输入自定义标签' style='width:160px;margin-left:8px'>
+            </td></tr>
+            <tr><td>权重：</td><td><input type='number' id='weight' value='1.0' min='0' max='1' step='0.1' style='width:200px'></td></tr>
+            <tr><td>备注：</td><td><input type='text' id='note' style='width:200px'></td></tr>
+        </table>
+        <button type='submit' style='background:#2da44e;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer'>添加</button>
+        <button type='button' onclick='document.getElementById("addForm").style.display="none"' style='margin-left:10px;padding:8px 16px'>取消</button>
+    </form>
+</div>
+
+<div style='margin:20px 0'>
+    <strong>标签筛选：</strong> {tag_filters}
+</div>
+
+<div style='display:flex;justify-content:space-between;align-items:center;margin:20px 0 8px'>
+    <h2 style='margin:0'>关键词列表 ({len(keywords)} 条)</h2>
+    <div>
+        <button onclick='document.getElementById("addForm").style.display="block"' style='background:#2da44e;color:white;border:none;padding:6px 14px;border-radius:6px;cursor:pointer'>+ 添加</button>
+        <button onclick='deleteSelected()' style='margin-left:8px;background:#cf222e;color:white;border:none;padding:6px 14px;border-radius:6px;cursor:pointer'>🗑 删除选中</button>
+    </div>
+</div>
+<table id='kwTable'>
+    <thead><tr>
+        <th><input type='checkbox' id='chkAll' onclick='toggleAll(this)'></th>
+        <th>词</th>
+        <th onclick='sortTable(2,"text")' style='cursor:pointer;user-select:none'>标签 ⇅</th>
+        <th onclick='sortTable(3,"num")' style='cursor:pointer;user-select:none'>权重 ⇅</th>
+        <th onclick='sortTable(4,"text")' style='cursor:pointer;user-select:none'>来源 ⇅</th>
+        <th>备注</th>
+    </tr></thead>
+    <tbody>{kw_rows}</tbody>
+</table>
+
+<h2>AI推荐 ({len(suggestions)} 条待审核)</h2>
+<table>
+    <thead><tr><th>词</th><th>建议标签</th><th>分数</th><th>理由</th><th>操作</th></tr></thead>
+    <tbody>{sug_rows}</tbody>
+</table>
+
+<script>
+const currentEntity = '{current_entity or ''}';
+
+function addKeyword(e) {{
+    e.preventDefault();
+    const data = {{
+        action: 'add',
+        word: document.getElementById('word').value,
+        tag: document.getElementById('customTag').value.trim() || document.getElementById('tag').value,
+        weight: document.getElementById('weight').value,
+        note: document.getElementById('note').value,
+        entity_id: currentEntity
+    }};
+
+    fetch('/api/keywords', {{
+        method: 'POST',
+        headers: {{'Content-Type': 'application/json'}},
+        body: JSON.stringify(data)
+    }})
+    .then(r => r.json())
+    .then(result => {{
+        if (result.success) {{
+            alert('添加成功');
+            location.reload();
+        }} else {{
+            alert('添加失败: ' + result.message);
+        }}
+    }});
+    return false;
+}}
+
+function toggleAll(cb) {{
+    document.querySelectorAll('.rowchk').forEach(c => c.checked = cb.checked);
+}}
+
+function deleteSelected() {{
+    const checks = [...document.querySelectorAll('.rowchk:checked')];
+    if (!checks.length) {{ alert('请先勾选要删除的关键词'); return; }}
+    if (!confirm('确认删除选中的 ' + checks.length + ' 个关键词?')) return;
+    Promise.all(checks.map(c => {{
+        const data = new URLSearchParams({{action: 'delete', word: c.dataset.word, tag: c.dataset.tag, entity_id: currentEntity}});
+        return fetch('/api/keywords', {{method: 'POST', body: data}}).then(r => r.json());
+    }})).then(results => {{
+        const ok = results.filter(r => r.success).length;
+        alert('已删除 ' + ok + '/' + results.length);
+        location.reload();
+    }});
+}}
+
+let sortDir = {{}};
+function sortTable(col, type) {{
+    const tbody = document.querySelector('#kwTable tbody');
+    const rows = [...tbody.querySelectorAll('tr')].filter(r => r.querySelector('.rowchk'));
+    if (!rows.length) return;
+    const dir = sortDir[col] = -(sortDir[col] || 1);
+    rows.sort((a, b) => {{
+        let x = a.children[col].textContent.trim(), y = b.children[col].textContent.trim();
+        if (type === 'num') return ((parseFloat(x) || 0) - (parseFloat(y) || 0)) * dir;
+        return x.localeCompare(y, 'zh') * dir;
+    }});
+    rows.forEach(r => tbody.appendChild(r));
+}}
+
+function approveSuggestion(id) {{
+    const data = new URLSearchParams({{action: 'approve', id: id}});
+    fetch('/api/keywords', {{method: 'POST', body: data}})
+    .then(r => r.json())
+    .then(result => {{
+        alert(result.message);
+        if (result.success) location.reload();
+    }});
+}}
+
+function rejectSuggestion(id) {{
+    const data = new URLSearchParams({{action: 'reject', id: id}});
+    fetch('/api/keywords', {{method: 'POST', body: data}})
+    .then(r => r.json())
+    .then(result => {{
+        alert(result.message);
+        if (result.success) location.reload();
+    }});
+}}
+
+function setRunBtn(running) {{
+    const btn = document.getElementById('runBtn');
+    if (running) {{ btn.textContent = '⏸ 停止采集'; btn.style.background = '#cf222e'; btn.onclick = stopAnalysis; }}
+    else {{ btn.textContent = '▶ 运行采集'; btn.style.background = '#0969da'; btn.onclick = runAnalysis; }}
+}}
+
+function runAnalysis() {{
+    if (!confirm('确认运行一次网络内容分析？\\n流程：采集→分析→报告。需 opencli 已登录 + API key，可能耗时数分钟。')) return;
+    fetch('/api/run', {{method: 'POST'}}).then(r => r.json()).then(() => pollRun());
+}}
+
+function stopAnalysis() {{
+    if (!confirm('确认停止采集？将在完成当前平台后中止，已采数据保留。')) return;
+    fetch('/api/run/stop', {{method: 'POST'}}).then(r => r.json()).then(d => {{
+        document.getElementById('runStatus').innerHTML = '<span class="spin"></span>' + (d.message || '正在停止…');
+        pollRun();
+    }});
+}}
+
+function pollRun() {{
+    fetch('/api/run/status').then(r => r.json()).then(d => {{
+        const el = document.getElementById('runStatus');
+        setRunBtn(d.running);
+        if (d.running) {{
+            el.innerHTML = '<span class="spin"></span>' + (d.current || '采集运行中…');
+            setTimeout(pollRun, 1500);
+        }} else if (d.last) {{
+            el.textContent = (d.last.ok ? '✅ ' : '⚠️ ') + d.last.msg + ' (' + d.last.at + ')';
+        }} else {{ el.textContent = ''; }}
+    }});
+}}
+pollRun();   // 页面加载即同步一次状态（若正在跑则恢复轮询）
+</script>
+"""
+
+    return _page("关键词库管理", body)
+
+
+def render_login() -> str:
+    """登录与采集页：桥状态 + 各平台登录态（JS 异步拉取）+ 一键开登录页 + 运行采集。"""
+    # 纯静态外壳，行由 /api/login/status 异步填（heimao 走浏览器桥略慢，不阻塞页面）。
+    # ponytail: runAnalysis/pollRun 与关键词页重复 ~15 行；两处调用不值得建共享 JS 资产管线。
+    body = """
+<h1>登录与采集</h1>
+<p><a href='/'>← 返回看板</a> ｜ <a href='/watch'>监控配置</a> ｜ <a href='/keywords'>关键词库</a></p>
+<p class=muted>采集复用你本机 Chrome 的登录会话。登录需人工扫码/短信（无法全自动），登录后点"运行采集"即可无人值守跑批。</p>
+
+<div id='bridge' class=muted style='margin:12px 0'>检测浏览器桥…</div>
+
+<h2>平台登录状态</h2>
+<table>
+    <thead><tr><th>平台</th><th>登录态</th><th>身份/备注</th><th>操作</th></tr></thead>
+    <tbody id='loginRows'><tr><td colspan='4' class=muted>加载中…</td></tr></tbody>
+</table>
+<p><button onclick='refreshLogin()'>🔄 重新检测</button></p>
+
+<div style='margin-top:24px;padding:15px;background:#f6f8fa;border-radius:6px'>
+    <strong>登录好后：</strong>
+    <button onclick='runAnalysis()' id='runBtn' style='margin-left:12px;background:#0969da;color:white;border:none;padding:6px 14px;border-radius:6px;cursor:pointer'>▶ 运行采集</button>
+    <span id='runStatus' class=muted style='margin-left:10px'></span>
+</div>
+
+<script>
+function badge(ok) {
+    return ok ? '<span style="color:#1a7f37">✅ 已登录</span>' : '<span style="color:#8c8c8c">⬜ 未登录</span>';
+}
+function refreshLogin() {
+    document.getElementById('bridge').textContent = '检测浏览器桥…';
+    document.getElementById('loginRows').innerHTML = '<tr><td colspan="4" class=muted>检测中…（黑猫走浏览器桥略慢）</td></tr>';
+    fetch('/api/login/status').then(r => r.json()).then(d => {
+        document.getElementById('bridge').innerHTML = (d.bridge_ok ? '✅ ' : '❌ ') + d.bridge_msg;
+        document.getElementById('loginRows').innerHTML = d.platforms.map(p => {
+            const extra = p.identity || p.error || (p.method === 'browser' ? '浏览器探测' : '');
+            return '<tr><td>' + p.platform + '</td><td>' + badge(p.logged_in) + '</td>'
+                + '<td class=muted>' + extra + '</td>'
+                + '<td><button onclick="openLogin(\\'' + p.platform + '\\')">打开登录页</button></td></tr>';
+        }).join('') || '<tr><td colspan="4" class=muted>无需登录的平台</td></tr>';
+    }).catch(() => { document.getElementById('bridge').textContent = '❌ 状态查询失败'; });
+}
+function openLogin(p) {
+    fetch('/api/login/open', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({platform: p})})
+    .then(r => r.json()).then(d => alert(d.message));
+}
+function setRunBtn(running) {
+    const btn = document.getElementById('runBtn');
+    if (running) { btn.textContent = '⏸ 停止采集'; btn.style.background = '#cf222e'; btn.onclick = stopAnalysis; }
+    else { btn.textContent = '▶ 运行采集'; btn.style.background = '#0969da'; btn.onclick = runAnalysis; }
+}
+function runAnalysis() {
+    if (!confirm('确认运行一次采集分析？\\n流程：采集→分析→报告，可能耗时数分钟。')) return;
+    fetch('/api/run', {method: 'POST'}).then(r => r.json()).then(() => pollRun());
+}
+function stopAnalysis() {
+    if (!confirm('确认停止采集？将在完成当前平台后中止，已采数据保留。')) return;
+    fetch('/api/run/stop', {method: 'POST'}).then(r => r.json()).then(d => {
+        document.getElementById('runStatus').innerHTML = '<span class="spin"></span>' + (d.message || '正在停止…');
+        pollRun();
+    });
+}
+function pollRun() {
+    fetch('/api/run/status').then(r => r.json()).then(d => {
+        const el = document.getElementById('runStatus');
+        setRunBtn(d.running);
+        if (d.running) {
+            el.innerHTML = '<span class="spin"></span>' + (d.current || '采集运行中…');
+            setTimeout(pollRun, 1500);
+        } else if (d.last) {
+            el.textContent = (d.last.ok ? '✅ ' : '⚠️ ') + d.last.msg + ' (' + d.last.at + ')';
+        } else { el.textContent = ''; }
+    });
+}
+refreshLogin();
+pollRun();
+</script>
+"""
+    return _page("登录与采集", body)
+
+
+def render_watch() -> str:
+    """监控配置编辑页：直接编辑 watch.yaml（唯一事实源）。保存前后端强校验，写前自动备份。"""
+    from . import watch_path
+    p = watch_path()
+    try:
+        with open(p, encoding="utf-8") as f:
+            content = f.read()
+    except Exception as e:
+        content = f"# 读取失败：{e}"
+    body = f"""
+<h1>监控配置 <span class=muted>（watch.yaml，采集的搜索对象来源）</span></h1>
+<p><a href='/'>← 返回看板</a> ｜ <a href='/login'>登录与采集</a> ｜ <a href='/keywords'>关键词库</a> ｜ <a href='/accounts'>账号白名单</a></p>
+<p class=muted>生效文件：<code>{html.escape(p)}</code>；保存后下轮采集/刷新即生效，无需重启。写入前自动备份到 <code>watch.yaml.bak</code>。</p>
+
+<div style='margin:16px 0;padding:14px;background:#f6f8fa;border-radius:8px'>
+  <b>🌱 种子词建议</b> <span class=muted>（系统挖的"产品词"，确认后写入 aliases 扩召回；评价词自动分流到 <a href='/keywords'>关键词库</a>）</span>
+  <button onclick='mineSeeds()' style='margin-left:10px;padding:4px 12px;border-radius:6px;border:1px solid #d0d7de;cursor:pointer'>🔄 生成建议</button>
+  <span id='mineMsg' class=muted style='margin-left:8px'></span>
+  <table id='seedTbl' style='margin-top:8px;display:none'>
+    <thead><tr><th>词</th><th>区分度</th><th>共现</th><th>来源</th><th>操作</th></tr></thead>
+    <tbody id='seedRows'></tbody>
+  </table>
+</div>
+
+<details style='margin:8px 0'><summary class=muted style='cursor:pointer'>字段说明（点开）</summary>
+<pre class=muted>platforms: [weibo, zhihu, xiaohongshu, douyin, bilibili, tieba, hupu, smzdm, weixin, heimao]
+            # 只能填以上平台；决定采哪些站
+entities:
+  - id: youdoo            # 实体唯一标识（进 clean/报告/看板下拉）
+    type: self            # self=报告主体+预警；competitor=只做SOV/情绪对比
+    aliases: ["Youdoo Box","有度盒子"]   # aliases[0]=搜索词；全部别名用于相关性过滤（必须含其一）
+    must_not: ["Doo Prime"]              # 命中即判非本品，硬排除同名歧义
+    track_users: ["weibo:123"]           # 可选，定向抓这些账号
+    crisis_boost: ["卡顿","死机","退货"]  # 该实体专属危机词，命中→风险×1.5</pre></details>
+
+<textarea id='yaml' style='width:100%;height:420px;font:13px/1.5 Consolas,Menlo,monospace;padding:10px;border:1px solid #d0d7de;border-radius:6px'>{html.escape(content)}</textarea>
+<p>
+    <button onclick='saveWatch()' style='background:#2da44e;color:white;border:none;padding:8px 18px;border-radius:6px;cursor:pointer'>💾 保存</button>
+    <button onclick='location.reload()' style='margin-left:8px;padding:8px 18px'>撤销更改</button>
+    <span id='watchMsg' class=muted style='margin-left:12px'></span>
+</p>
+
+<script>
+function saveWatch() {{
+    const el = document.getElementById('watchMsg');
+    el.textContent = '保存中…';
+    fetch('/api/watch', {{method: 'POST', headers: {{'Content-Type': 'application/json'}},
+        body: JSON.stringify({{content: document.getElementById('yaml').value}})}})
+    .then(r => r.json()).then(d => {{
+        el.innerHTML = (d.success ? '✅ ' : '⚠️ ') + d.message;
+    }}).catch(e => {{ el.textContent = '⚠️ 请求失败'; }});
+}}
+function esc(s){{return (s||'').replace(/[&<>"]/g,c=>({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}}[c]));}}
+function loadSeeds() {{
+  fetch('/api/seed/list').then(r=>r.json()).then(d=>{{
+    const rows=d.seeds||[]; const tb=document.getElementById('seedRows');
+    document.getElementById('seedTbl').style.display = rows.length?'table':'none';
+    tb.innerHTML = rows.map(s=>'<tr><td><b>'+esc(s.word)+'</b></td><td>×'+
+      (s.reason||'').replace(/[^0-9.×]/g,'').slice(0,5)+'</td><td>'+esc(s.reason||'')+
+      '</td><td class=muted>'+esc((s.source_docs||'').slice(0,30))+'</td><td>'+
+      '<button onclick="seedAct('+s.id+',\\'approve\\')" style="background:#2da44e;color:#fff;border:none;padding:3px 10px;border-radius:5px;cursor:pointer">✓加入aliases</button> '+
+      '<button onclick="seedAct('+s.id+',\\'reject\\')" style="padding:3px 8px">✗</button></td></tr>').join('');
+    if(!rows.length) document.getElementById('mineMsg').textContent='暂无待确认种子词';
+  }});
+}}
+function mineSeeds() {{
+  document.getElementById('mineMsg').textContent='挖词中…（需 EMBED key + 已向量化数据）';
+  fetch('/api/seed',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{action:'mine'}})}})
+    .then(r=>r.json()).then(d=>{{ document.getElementById('mineMsg').textContent=d.message||''; loadSeeds(); }});
+}}
+function seedAct(id, action) {{
+  fetch('/api/seed',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{action:action,id:id}})}})
+    .then(r=>r.json()).then(d=>{{ document.getElementById('mineMsg').textContent=d.message||''; loadSeeds(); }});
+}}
+loadSeeds();
+</script>
+"""
+    return _page("监控配置", body)
+
+
+def render_accounts(store: Store) -> str:
+    """官方账号白名单管理：登记官方/准官方/媒体账号，主体维确定性判定用。"""
+    rows = ""
+    for a in store.list_accounts():
+        a = dict(a)
+        rows += (f"<tr><td>{html.escape(a.get('platform') or '(全平台)')}</td>"
+                 f"<td>{html.escape(a['author'])}</td><td>{html.escape(a['subject_type'])}</td>"
+                 f"<td class=muted>{html.escape(a.get('entity_id') or '')}</td>"
+                 f"<td><button onclick='delAcct({a['id']})'>✕</button></td></tr>")
+    if not rows:
+        rows = "<tr><td colspan=5 class=muted>暂无登记账号（未登记的一律判为 用户·KOL）</td></tr>"
+    body = f"""
+<h1>官方账号白名单 <span class=muted>（主体维确定性判定）</span></h1>
+<p><a href='/'>← 返回看板</a> ｜ <a href='/watch'>监控配置</a> ｜ <a href='/annotate'>标注</a></p>
+<p class=muted>登记官方/准官方/媒体账号，分析时命中即确定性判主体（盖过 LLM）；未登记默认"用户·KOL"。</p>
+<div style='margin:14px 0;padding:12px;background:#f6f8fa;border-radius:8px'>
+  <b>添加</b>：账号 <input id='au' placeholder='昵称，须与帖子作者一致' style='width:220px'>
+  类型 <select id='st'><option>官方</option><option>准官方</option><option>媒体</option></select>
+  平台 <input id='pf' placeholder='留空=全平台' style='width:90px'>
+  <button onclick='addAcct()' style='background:#2da44e;color:#fff;border:none;padding:5px 14px;border-radius:6px;cursor:pointer'>+ 添加</button>
+  <span id='acctMsg' class=muted style='margin-left:8px'></span>
+</div>
+<table><thead><tr><th>平台</th><th>账号</th><th>类型</th><th>实体</th><th></th></tr></thead>
+<tbody>{rows}</tbody></table>
+<script>
+function addAcct() {{
+  const au=document.getElementById('au').value.trim();
+  if(!au){{document.getElementById('acctMsg').textContent='请填账号';return;}}
+  fetch('/api/accounts',{{method:'POST',headers:{{'Content-Type':'application/json'}},
+    body:JSON.stringify({{action:'add',author:au,subject_type:document.getElementById('st').value,platform:document.getElementById('pf').value.trim()}})}})
+    .then(r=>r.json()).then(d=>{{ if(d.success) location.reload(); else document.getElementById('acctMsg').textContent=d.message||'失败'; }});
+}}
+function delAcct(id) {{
+  if(!confirm('删除该账号登记？')) return;
+  fetch('/api/accounts',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{action:'delete',id:id}})}})
+    .then(r=>r.json()).then(d=>{{ if(d.success) location.reload(); }});
+}}
+</script>
+"""
+    return _page("账号白名单", body)
+
+
+def render_annotate(store: Store, query_params: dict) -> str:
+    """标注控制台（训练模式）：主动学习队列 + 多维标注 + 划选圈词。队列/写全走 fetch。"""
+    from . import load_watch
+    from .keywords import SUBJECTS, STANCES, IMPORTANCE, TAGS
+    try:
+        entities = [(e["id"], (e.get("aliases") or [e["id"]])[0]) for e in load_watch().get("entities", [])]
+    except SystemExit:
+        entities = [(r[0], r[0]) for r in store.conn.execute(
+            "SELECT DISTINCT entity_id FROM clean WHERE entity_id IS NOT NULL").fetchall()]
+    cur = query_params.get("entity", [entities[0][0] if entities else ""])[0]
+    ent_opts = "".join(f"<option value='{html.escape(e)}' {'selected' if e==cur else ''}>{html.escape(nm)}</option>"
+                       for e, nm in entities)
+    subj_opts = "".join(f"<label><input type=radio name=subject value='{s}'>{s}</label> " for s in SUBJECTS)
+    stance_opts = "".join(f"<label><input type=radio name=stance value='{s}'>{s}</label> " for s in STANCES)
+    imp_opts = "".join(f"<label><input type=radio name=importance value='{s}'>{s}</label> " for s in IMPORTANCE)
+    role_opts = "".join(f"<option value='{c}'>{n}</option>" for c, n in TAGS.items())
+    done = store.annotated_count()
+    body = f"""
+<h1>标注控制台 <span class=muted>（训练模式）</span></h1>
+<p><a href='/'>← 返回看板</a> ｜ <a href='/keywords'>关键词库</a> ｜ <a href='/watch'>监控配置</a>
+   ｜ 累计已标注 <b>{done}</b> 条</p>
+<p class=muted>系统按"最没把握+高影响+多样"挑代表样本给你标；圈选的词会进关键词库待审，产品名会进种子建议。</p>
+
+<div style='margin:12px 0'>实体：
+  <select id='entSel' onchange='location.href="/annotate?entity="+this.value'>{ent_opts}</select>
+  <span id='queueInfo' class=muted style='margin-left:12px'>加载队列…</span>
+</div>
+
+<div id='card' class='card' style='border:1px solid #d0d7de;border-radius:8px;padding:16px;display:none'>
+  <div id='meta' class=muted></div>
+  <div style='margin:6px 0'><b>采样原因：</b><span id='reason'></span></div>
+  <div id='body' style='background:#f6f8fa;padding:12px;border-radius:6px;line-height:1.9;user-select:text;cursor:text'></div>
+  <div class=muted style='margin:6px 0'>机器判定(对照)：<span id='mach'></span></div>
+  <hr>
+  <div style='margin:8px 0'><b>主体：</b>{subj_opts}</div>
+  <div style='margin:8px 0'><b>立场：</b>{stance_opts}</div>
+  <div style='margin:8px 0'><b>重要性：</b>{imp_opts} <span class=muted>（预填，可改）</span></div>
+  <div style='margin:8px 0'><b>圈选的词</b> <span class=muted>（在正文里鼠标划选自动加行）</span>：
+    <div id='words'></div>
+    <template id='wordRow'>
+      <div style='margin:4px 0'>「<span class=w></span>」→
+        <select class=role>{role_opts}</select>
+        <button type=button class=del>✕</button></div>
+    </template>
+  </div>
+  <div style='margin:8px 0'>备注：<input id='note' style='width:60%'></div>
+  <div style='margin-top:12px'>
+    <button onclick='save()' style='background:#2da44e;color:#fff;border:none;padding:8px 18px;border-radius:6px;cursor:pointer'>保存并下一条 ▶</button>
+    <button onclick='nextCard()' style='margin-left:8px;padding:8px 18px'>跳过</button>
+    <span id='msg' class=muted style='margin-left:12px'></span>
+  </div>
+</div>
+<div id='empty' class=muted style='display:none;padding:40px;text-align:center'>🎉 该实体暂无待标样本</div>
+
+<script>
+const ENTITY='{cur}';
+let queue=[], cur_=null;
+function esc(s){{return (s||'').replace(/[&<>]/g,c=>({{'&':'&amp;','<':'&lt;','>':'&gt;'}}[c]));}}
+function loadQueue(){{
+  fetch('/api/annotate/queue?entity='+encodeURIComponent(ENTITY)).then(r=>r.json()).then(d=>{{
+    queue=d.queue||[]; document.getElementById('queueInfo').textContent='待标 '+queue.length+' 条';
+    nextCard();
+  }});
+}}
+function nextCard(){{
+  document.querySelectorAll('input[type=radio]').forEach(x=>x.checked=false);
+  document.getElementById('words').innerHTML=''; document.getElementById('note').value='';
+  document.getElementById('msg').textContent='';
+  if(!queue.length){{document.getElementById('card').style.display='none';document.getElementById('empty').style.display='block';return;}}
+  cur_=queue.shift();
+  document.getElementById('card').style.display='block'; document.getElementById('empty').style.display='none';
+  document.getElementById('meta').innerHTML='['+esc(cur_.platform)+'] @'+esc(cur_.author||'?')+' 粉'+(cur_.author_followers||0)+' · '+esc(cur_.publish_ts||'')+' · <a href="'+esc(cur_.url||'#')+'" target=_blank>原文</a>';
+  document.getElementById('reason').textContent=cur_.reason||'';
+  document.getElementById('body').textContent=cur_.text||'';
+  document.getElementById('mach').textContent=(cur_.polarity||'?')+' / 置信'+(cur_.confidence??'?')+' / risk'+(cur_.risk??'?');
+  // 重要性预填
+  const imp = (cur_.risk>=40)?'高':(cur_.risk>=10)?'中':'低';
+  const el=[...document.querySelectorAll('input[name=importance]')].find(x=>x.value===imp); if(el)el.checked=true;
+  document.getElementById('queueInfo').textContent='待标 '+queue.length+' 条';
+}}
+// 划选圈词
+document.getElementById('body').addEventListener('mouseup',()=>{{
+  const w=(window.getSelection().toString()||'').trim();
+  if(!w||w.length>20)return;
+  const t=document.getElementById('wordRow').content.cloneNode(true);
+  t.querySelector('.w').textContent=w;
+  t.querySelector('.del').onclick=e=>e.target.closest('div').remove();
+  document.getElementById('words').appendChild(t);
+  window.getSelection().removeAllRanges();
+}});
+function radioVal(n){{const e=document.querySelector('input[name='+n+']:checked');return e?e.value:null;}}
+function save(){{
+  const words=[...document.querySelectorAll('#words > div')].map(d=>({{word:d.querySelector('.w').textContent, role:d.querySelector('.role').value}}));
+  const payload={{doc_id:cur_.doc_id, entity_id:cur_.entity_id||ENTITY, sample_source:'active',
+    subject:radioVal('subject'), stance:radioVal('stance'), importance:radioVal('importance'),
+    picked_words:words, note:document.getElementById('note').value}};
+  if(!payload.subject||!payload.stance){{document.getElementById('msg').textContent='请至少选主体和立场';return;}}
+  fetch('/api/annotate',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify(payload)}})
+    .then(r=>r.json()).then(d=>{{ if(d.success) nextCard(); else document.getElementById('msg').textContent='保存失败: '+(d.message||''); }});
+}}
+loadQueue();
+</script>
+"""
+    return _page("标注控制台", body)
+
+def render_config(*, saved: bool = False, test_msg: str = "") -> str:
+    from . import config
+    rows = ""
+    for k, label, secret, display, is_set in config.masked():
+        if k == "YUQING_MODE":
+            cur = display or "daily"
+            opts = "".join(f"<option value='{m}' {'selected' if m==cur else ''}>{m}</option>"
+                           for m in ("daily", "training"))
+            field = f"<select name={k}>{opts}</select>"
+        elif secret:
+            ph = f"已设置 {html.escape(display)}，留空则不改" if is_set else "未设置"
+            field = f"<input type=password name={k} placeholder='{ph}' autocomplete=off>"
+        else:
+            field = f"<input type=text name={k} value='{html.escape(display)}'>"
+        rows += (f"<tr><td>{html.escape(label)}</td><td>{field}</td>"
+                 f"<td class=muted>{'✓已配置' if is_set else '—'}</td></tr>")
+    notice = "<p style='color:#1a7f37'>✓ 已保存</p>" if saved else ""
+    if test_msg:
+        notice += f"<p class=muted>{html.escape(test_msg)}</p>"
+    tests = (" ｜ 测试连通："
+             "<a href='/config/test?p=deepseek'>DeepSeek</a> "
+             "<a href='/config/test?p=minimax'>MiniMax</a> "
+             "<a href='/config/test?p=feishu'>飞书</a>")
+    body = (
+        "<h1>系统配置 <span class=muted>（本机写入，密钥仅存本地 yuqing_config.json）</span></h1>"
+        f"<p><a href='/'>← 返回看板</a>{tests}</p>" + notice +
+        "<form method=post action='/config'>"
+        "<table><tr><th>配置项</th><th>值</th><th>状态</th></tr>" + rows + "</table>"
+        "<p><button type=submit>保存</button> "
+        "<span class=muted>密钥留空=保持原值；明文项留空=清除回退默认</span></p></form>"
+        "<p class=muted>⚠️ 保存后需重跑批 <code>python -m yuqing.run</code> 生效。"
+        "密钥以明文存本地文件（同 env 风险），已 gitignore 不进仓库。</p>")
+    return _page("系统配置", body)

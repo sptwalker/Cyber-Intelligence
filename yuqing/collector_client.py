@@ -83,7 +83,7 @@ def selfcheck(*, timeout: int = 5) -> dict[str, Any]:
     if not isinstance(item, dict) or item.get("platform") != "weibo":
         raise RuntimeError("Collector selfcheck item contract invalid")
 
-    from .collect import normalize
+    from .normalization import normalize
 
     doc = normalize(
         "weibo", "_collector_selfcheck", item,

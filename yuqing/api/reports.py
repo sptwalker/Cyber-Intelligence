@@ -12,7 +12,7 @@ from urllib.parse import urlparse
 
 from ..report import build_report, validate_citations
 from .collection import latest_platform_runs
-from .overview import resolve_entity
+from .entities import resolve_entity
 from .responses import APIError
 
 

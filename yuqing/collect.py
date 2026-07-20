@@ -8,7 +8,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import re
@@ -18,7 +17,8 @@ import time
 from urllib.parse import quote
 from typing import Optional
 
-from .store import CleanDoc, Store
+from .normalization import normalize
+from .store import Store
 from . import health
 from . import relevance
 
@@ -31,7 +31,6 @@ OPENCLI_SITE = {"weibo": "weibo", "zhihu": "zhihu", "douyin": "douyin",
                 "xiaohongshu": "xiaohongshu", "bilibili": "bilibili", "tieba": "tieba",
                 "weixin": "weixin", "hupu": "hupu", "smzdm": "smzdm"}   # 视频号只能发布,不接
 
-_COMPLAINT_TRIGGERS = ["投诉", "维权", "退款", "退货", "赔偿", "曝光", "避雷", "翻车", "召回", "欺诈"]
 _ISO_TS = re.compile(r"^\d{4}-\d{2}-\d{2}")   # 仅 ISO 日期串可参与水位比较
 
 _SEM_THRESHOLD = 0.55        # 语义相关性默认阈值（保守，宁缺毋滥防串味），可 config 覆盖
@@ -66,73 +65,6 @@ def _semantic_sim(sem_on: bool, ent_vec, text: str):
         return embed.cosine(ent_vec, v) if v else None
     except Exception:
         return None
-
-
-def _pick(d: dict, *keys, default=None):
-    for k in keys:
-        v = d.get(k)
-        if v not in (None, ""):
-            return v
-    return default
-
-
-def _to_int(v) -> int:
-    """'1.2万' / '10w+' / 1234 → int。"""
-    if isinstance(v, (int, float)):
-        return int(v)
-    s = str(v or "0").strip().lower().replace("+", "").replace(",", "")
-    try:
-        if s.endswith("万") or s.endswith("w"):
-            return int(float(s[:-1]) * 10000)
-        return int(float(s))
-    except ValueError:
-        return 0
-
-
-# url 末段是这些泛化词时，说明它不是文章 id（如公众号搜狗跳转链 /link）——改用 标题+时间 哈希。
-_GENERIC_SEG = {"", "link", "index", "s", "detail", "view", "article", "search"}
-
-
-def _derive_id(item: dict) -> str:
-    """取平台原生 id；无显式 id 时从 url 末段派生；末段泛化(如搜狗 /link)时用 标题+时间 稳定哈希。"""
-    nid = _pick(item, "id", "note_id", "mid", "aweme_id", "rid", "tid", default="")   # tid=虎扑
-    if nid:
-        return str(nid)
-    u = _pick(item, "url", "link", "note_url", default="")
-    seg = u.split("?")[0].rstrip("/").split("/")[-1] if u else ""
-    if seg and seg.lower() not in _GENERIC_SEG:
-        return seg                                       # url 末段就是稳定 id（微博/知乎/B站/抖音…）
-    # 无稳定 url 段：用 标题+发布时间 做稳定去重键（公众号 sogou 跳转链无固定 id）
-    basis = _pick(item, "title", "desc", "text", default="") + "|" + \
-        _pick(item, "publish_time", "time", "date", "published_at", default="")
-    if basis.strip("|"):
-        return hashlib.md5(basis.encode("utf-8")).hexdigest()[:12]
-    return hashlib.md5(u.encode("utf-8")).hexdigest()[:12] if u else ""
-
-
-def normalize(platform: str, entity_id: str, item: dict, backend: str, fetched_at: str) -> CleanDoc:
-    text = _pick(item, "text", "content", "desc", "snippet", "summary", "title", default="")  # 贴吧snippet/公众号summary=全文
-    user = item.get("user") or item.get("author") or {}
-    if isinstance(user, str):
-        user = {"nickname": user}
-    is_complaint = platform == "heimao" or any(t in text for t in _COMPLAINT_TRIGGERS)
-    return CleanDoc.build(
-        platform=platform, entity_id=entity_id,
-        native_id=_derive_id(item),
-        text=text,
-        author=_pick(user, "nickname", "nick_name", "name", default=""),
-        author_followers=_to_int(_pick(user, "followers", "fans", "fans_count", default=0)),
-        likes=_to_int(_pick(item, "like_count", "liked_count", "digg_count", "votes", "likes",
-                            "lights", "zhi_count", default=0)),   # lights=虎扑点亮, zhi_count=值得买"值"
-        comments=_to_int(_pick(item, "comment_count", "comments", "comment", "replies", default=0)),  # replies=虎扑
-        reposts=_to_int(_pick(item, "repost_count", "share_count", "forward_count", "shares", default=0)),
-        plays=_to_int(_pick(item, "plays", "score", "play_count", "views", default=0)),   # B站score=播放量
-        publish_ts=str(_pick(item, "created_at", "time", "publish_time", "date", "published_at",
-                            "updated_at", default="")),
-        url=_pick(item, "url", "link", "note_url", default=""),
-        tags=item.get("tags") or item.get("tag_list") or [],
-        is_complaint=is_complaint, backend=backend, fetched_at=fetched_at,
-    )
 
 
 def _parse_opencli_json(stdout: str, returncode: int, site: str, limit: int) -> list[dict]:

@@ -9,7 +9,7 @@ import datetime as _dt
 import json
 from typing import Any
 
-from .overview import resolve_entity
+from .entities import resolve_entity
 from .responses import APIError
 
 

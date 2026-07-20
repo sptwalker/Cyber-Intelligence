@@ -1,0 +1,2 @@
+# Avoid indexing Graphify's own project-scoped skill and reference files.
+.codex/skills/graphify/

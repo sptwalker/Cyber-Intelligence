@@ -13,6 +13,8 @@ from collections import defaultdict
 from statistics import median
 from typing import Optional
 
+from .watch_config import validate_watch
+
 _YMD = re.compile(r"(\d{4})\s*[-/.年]\s*(\d{1,2})\s*[-/.月]\s*(\d{1,2})")   # 带4位年，任意分隔
 _MD = re.compile(r"(?<!\d)(\d{1,2})\s*[-/.月]\s*(\d{1,2})(?!\d)")            # 无年，月日(前后非数字防误吞年份)
 _NDAYS = re.compile(r"(\d+)\s*天前")
@@ -515,9 +517,7 @@ def append_alias(entity_id: str, word: str) -> tuple[bool, str]:
                 new = f'{m.group("pre")}{m.group("body")}, "{word}"{m.group("post")}'
                 lines[i] = new if new.endswith("\n") or not ln.endswith("\n") else new
                 cand = "".join(lines)
-                # 复用 dashboard 的结构校验（延迟导入避免循环）
-                from .dashboard import _validate_watch
-                ok, msg = _validate_watch(cand)
+                ok, msg = validate_watch(cand)
                 if not ok:
                     return False, f"改后不合法：{msg}"
                 try:
