@@ -19,26 +19,36 @@ PIPELINE_1528_PERL_CVES = {
     "CVE-2026-13221",
     "CVE-2026-57432",
 }
-PIPELINE_1530_DEBIAN12_BASE_CVES = {
+DEBIAN12_BASE_CVES = {
     "CVE-2026-6653": (
         "fix_deferred",
         "libxml2 2.9.14+dfsg-1.3~deb12u6",
+        "pipeline 1530/job 8985",
     ),
     "CVE-2026-59198": (
         "affected",
         "python3-pil 9.4.0-1.1+deb12u1",
+        "pipeline 1530/job 8985",
     ),
     "CVE-2026-59199": (
         "affected",
         "python3-pil 9.4.0-1.1+deb12u1",
+        "pipeline 1530/job 8985",
     ),
     "CVE-2026-59204": (
         "affected",
         "python3-pil 9.4.0-1.1+deb12u1",
+        "pipeline 1530/job 8985",
     ),
     "CVE-2026-59205": (
         "affected",
         "python3-pil 9.4.0-1.1+deb12u1",
+        "pipeline 1530/job 8985",
+    ),
+    "CVE-2026-54058": (
+        "affected",
+        "python3-pil 9.4.0-1.1+deb12u1",
+        "pipeline 1561/job 9323",
     ),
 }
 IGNORE_ENTRY = re.compile(r"^CVE-\d{4}-\d+$")
@@ -128,10 +138,10 @@ class TrivyGateTest(unittest.TestCase):
 
         self.assertEqual([], problems, "\n" + "\n".join(problems))
 
-    def test_pipeline_1530_debian12_findings_are_narrow_base_os_exceptions(self) -> None:
+    def test_debian12_findings_are_narrow_base_os_exceptions(self) -> None:
         problems: list[str] = []
-        for cve, (expected_status, package_version) in sorted(
-            PIPELINE_1530_DEBIAN12_BASE_CVES.items()
+        for cve, (expected_status, package_version, scan_reference) in sorted(
+            DEBIAN12_BASE_CVES.items()
         ):
             matching_lines = [
                 index for index, line in enumerate(self.ignore_lines) if line.strip() == cve
@@ -159,7 +169,7 @@ class TrivyGateTest(unittest.TestCase):
                 "collector image base OS",
                 "Debian 12/bookworm",
                 "no Debian fixed version",
-                "pipeline 1530/job 8985",
+                scan_reference,
                 f"Expires={POLICY_EXPIRY}",
             ):
                 if expected not in documented_line:

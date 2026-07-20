@@ -1,9 +1,13 @@
 # Trivy ignore — exact Debian base-OS CVEs with no vendor fixed version
-# Current evidence: pipeline 1530 / job 8985 scanned collector image Debian 12/bookworm packages.
-# Prior entries retain their reviewed Debian 13.5 and Debian 12.15/bookworm contexts below.
+# Current evidence: pipeline 1561 / job 9323 scanned collector image Debian 12/bookworm packages.
+# Prior entries retain their reviewed pipeline 1530, Debian 13.5, and Debian 12.15/bookworm contexts below.
 # Policy: re-evaluate on each base-image upgrade; all entries expire 2027-01-01.
 
-# Current pipeline 1530 / job 8985 collector image base-OS findings.
+# Current pipeline 1561 / job 9323 collector image base-OS findings.
+# CVE-2026-54058: Status=affected; Reason=python3-pil 9.4.0-1.1+deb12u1 is a collector image base OS Debian 12/bookworm package, not a Python app dependency, with no Debian fixed version per pipeline 1561/job 9323; Expires=2027-01-01
+CVE-2026-54058
+
+# Prior pipeline 1530 / job 8985 collector image base-OS findings.
 # CVE-2026-6653: Status=fix_deferred; Reason=libxml2 2.9.14+dfsg-1.3~deb12u6 is a collector image base OS Debian 12/bookworm package with no Debian fixed version per pipeline 1530/job 8985; Expires=2027-01-01
 CVE-2026-6653
 # CVE-2026-59198: Status=affected; Reason=python3-pil 9.4.0-1.1+deb12u1 is a collector image base OS Debian 12/bookworm package, not a Python app dependency, with no Debian fixed version per pipeline 1530/job 8985; Expires=2027-01-01
