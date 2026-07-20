@@ -17,9 +17,9 @@ from __future__ import annotations
 import datetime as _dt
 import sys
 
-from . import load_watch
 from .insights import ask, timeline, backlog, backlog_csv, oneliner
 from .store import Store
+from .watch_config import load_watch
 
 
 def main(argv: list[str]) -> int:

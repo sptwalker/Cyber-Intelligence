@@ -11,12 +11,12 @@ from __future__ import annotations
 import datetime as _dt
 import sys
 
-from . import load_watch
 from .alerts import dispatch as dispatch_alerts
 from .analyze import analyze_pending
 from .collect import collect_all
 from .report import build_report, push_report_notice, report_url, validate_citations
 from .store import Store
+from .watch_config import load_watch
 
 
 def main(watch_path: str = "watch.yaml", db: str = "yuqing.db",

@@ -18,6 +18,7 @@ from typing import Optional
 from .score import Weights, risk_score, influence_degraded, mention_equiv
 from . import llm
 from . import config
+from .watch_config import load_watch
 
 # --- 词典（冷启动种子，后续从误报回灌迭代）---
 CRISIS_WORDS = ["维权", "退款", "翻车", "避雷", "塌房", "召回", "爆炸", "起火", "曝光", "315", "诉讼", "欺诈"]
@@ -325,7 +326,6 @@ def analyze_pending(store, weights: Optional[Weights] = None, *, use_claude: Opt
     # 引擎无关的确定性覆盖（rule/LLM/claude 都生效），补全全局 CRISIS_WORDS 覆盖不到的产品专属词。
     entity_crisis: dict[str, list] = {}
     try:
-        from . import load_watch
         for e in load_watch().get("entities", []):
             cb = e.get("crisis_boost") or []
             if cb:
@@ -430,9 +430,9 @@ if __name__ == "__main__":
         "LLM 失败必须降级规则入库，不能空转"
 
     # crisis_boost 每实体危机词：命中"死机"(不在全局 CRISIS_WORDS)→ 强制 crisis 信号
-    import json as _json, yuqing as _pkg
-    _orig_lw = _pkg.load_watch
-    _pkg.load_watch = lambda *a, **k: {"entities": [{"id": "cb", "crisis_boost": ["死机"]}]}
+    import json as _json
+    _orig_lw = globals()["load_watch"]
+    globals()["load_watch"] = lambda *a, **k: {"entities": [{"id": "cb", "crisis_boost": ["死机"]}]}
     try:
         _st3 = _S(":memory:")
         _st3.add_clean(_CD.build(platform="weibo", entity_id="cb", native_id="n3", text="开机就死机，体验很差"))
@@ -440,7 +440,7 @@ if __name__ == "__main__":
         _sig = _json.loads(_st3.conn.execute("SELECT signals FROM features").fetchone()[0])
         assert _sig.get("crisis") is True, "crisis_boost 命中未强制 crisis"
     finally:
-        _pkg.load_watch = _orig_lw
+        globals()["load_watch"] = _orig_lw
 
     # 多维分类接线（离线走 classify_rule）：features.signals 落 subject/stance/importance；白名单盖主体
     _st4 = _S(":memory:")

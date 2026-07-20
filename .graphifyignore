@@ -1,2 +1,7 @@
 # Avoid indexing Graphify's own project-scoped skill and reference files.
 .codex/skills/graphify/
+
+# Exclude generated graph directories from normal scans. Graphify 0.9.20 still
+# intentionally includes graphify-out/memory during full-project detection.
+graphify-out/
+graphify-runtime/

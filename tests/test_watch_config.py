@@ -5,11 +5,15 @@ from __future__ import annotations
 
 import unittest
 
-from yuqing import dashboard
-from yuqing.watch_config import validate_watch
+from yuqing import dashboard, load_watch as legacy_load_watch, watch_path as legacy_watch_path
+from yuqing.watch_config import load_watch, validate_watch, watch_path
 
 
 class WatchConfigValidationTest(unittest.TestCase):
+    def test_package_root_reexports_loading_contracts(self) -> None:
+        self.assertIs(legacy_load_watch, load_watch)
+        self.assertIs(legacy_watch_path, watch_path)
+
     def test_valid_configuration_and_dashboard_compatibility_alias(self) -> None:
         text = """
 platforms: [weibo, zhihu]

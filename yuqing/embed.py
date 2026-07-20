@@ -156,67 +156,18 @@ def ensure_embeddings(store, *, now: str | None = None, batch: int = 10) -> int:
     return done
 
 
-if __name__ == "__main__":
+def main(argv: list[str] | None = None) -> None:
+    """Run the supported connectivity probe; regression checks live in tests."""
     import sys
-    if len(sys.argv) > 1 and sys.argv[1] == "ping":
+
+    args = list(sys.argv[1:] if argv is None else argv)
+    if args == ["ping"]:
         print(f"available={available()}")
         ok, msg = probe()
         print(msg)
     else:
-        # 离线自检：序列化往返 + 余弦 + top-k（纯函数，不触网）
-        v = [0.1, 0.2, 0.3, 0.4]
-        assert from_blob(to_blob(v)) == [round(x, 7) for x in [0.1, 0.2, 0.3, 0.4]] or \
-            all(abs(a - b) < 1e-6 for a, b in zip(from_blob(to_blob(v)), v))   # float32 往返
-        assert abs(cosine([1, 0], [1, 0]) - 1.0) < 1e-9        # 同向=1
-        assert abs(cosine([1, 0], [0, 1])) < 1e-9              # 正交=0
-        assert cosine([1, 0], [-1, 0]) < 0                     # 反向<0
-        assert cosine([], [1]) == 0.0 and cosine([0, 0], [1, 1]) == 0.0   # 零/不匹配安全
-        tk = top_k_similar([1, 0], [("a", [1, 0]), ("b", [0, 1]), ("c", [0.9, 0.1])], k=2)
-        assert [x[0] for x in tk] == ["a", "c"] and tk[0][1] > tk[1][1]     # 按相似排序
-        assert top_k_similar([1, 0], [("a", [0, 1])], min_sim=0.5) == []    # 阈值过滤
-        # 单链聚类：相近的归一簇，远的分开
-        cl = cluster([("a", [1, 0]), ("b", [0.98, 0.02]), ("c", [0, 1])], threshold=0.9)
-        groups = sorted([sorted(g) for g in cl])
-        assert groups == [["a", "b"], ["c"]], groups                        # a,b 一簇，c 独立
-        assert available() in (True, False)
+        print("Usage: python -m yuqing.embed ping")
 
-        # V1-B/C：存储缓存 + ensure_embeddings（mock embed_texts，不触网）
-        import os as _os
-        from .store import Store, CleanDoc
-        _os.environ["EMBED_API_KEY"] = "x"                      # 使 available()=True
-        import yuqing.embed as _e
-        calls = {"n": 0}
-        def _fake(texts, **kw):
-            calls["n"] += 1
-            return [[float(len(t)), 1.0, 0.0] for t in texts]   # 假向量
-        _e.embed_texts = _fake
-        s = Store(":memory:")
-        for i in range(3):
-            s.add_clean(CleanDoc.build(platform="weibo", entity_id="e", native_id=f"n{i}",
-                                       text=f"帖子内容{i}", fetched_at="2026-07-07T00:00:00"))
-        s.commit()
-        n1 = _e.ensure_embeddings(s, now="2026-07-07T00:00:00")
-        assert n1 == 3 and calls["n"] == 1, (n1, calls)         # 3条一批算一次
-        n2 = _e.ensure_embeddings(s, now="2026-07-07T00:00:00")
-        assert n2 == 0 and calls["n"] == 1, (n2, calls)         # 缓存：已算的不重算
-        got = from_blob(s.get_embedding(CleanDoc.build(platform="weibo", entity_id="e",
-                        native_id="n0", text="x").doc_id) or b"")
-        assert len(s.embeddings_for("e")) == 3                  # 检索用向量集
-        _os.environ.pop("EMBED_API_KEY")
-        assert _e.ensure_embeddings(Store(":memory:")) == 0     # 无 key → 跳过(降级)
 
-        # 验收修复：响应数量不齐→整批弃(不错位存错向量)
-        _os.environ["EMBED_API_KEY"] = "x"
-        _e.embed_texts = lambda texts, **kw: [[1.0, 0.0]]        # 返回1条(输入3条)
-        s3 = Store(":memory:")
-        for i in range(3):
-            s3.add_clean(CleanDoc.build(platform="weibo", entity_id="e", native_id=f"m{i}", text=f"内容{i}", fetched_at="t"))
-        s3.commit()
-        assert _e.ensure_embeddings(s3, now="2026-07-07T00:00:00") == 0, "数量不齐应整批弃"
-        # 验收修复：落库阶段异常也不逃逸(降级不阻塞)
-        _e.embed_texts = lambda texts, **kw: [[float("nan"), None] for _ in texts]  # to_blob 兜 None
-        s4 = Store(":memory:")
-        s4.add_clean(CleanDoc.build(platform="weibo", entity_id="e", native_id="z", text="x", fetched_at="t")); s4.commit()
-        _e.ensure_embeddings(s4, now="2026-07-07T00:00:00")     # 不抛异常即通过
-        _os.environ.pop("EMBED_API_KEY")
-        print("OK embed: 序列化+余弦+top-k+阈值 | 存储缓存+批量(缓存/无key降级/数量不齐弃/落库不逃逸) 全通")
+if __name__ == "__main__":
+    main()

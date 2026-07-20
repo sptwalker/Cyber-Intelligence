@@ -10,6 +10,7 @@ from ..report import aggregate
 from .collection import latest_platform_runs
 from .entities import resolve_entity
 from .overview import RANGES, cutoff_day, filter_range
+from .query_snapshot import request_query_snapshot
 from .responses import APIError
 
 
@@ -17,6 +18,7 @@ def build_analysis(store, watch: dict, *, entity_id: str | None = None,
                    range_name: str = "7d") -> tuple[dict[str, Any], str, list[str]]:
     if range_name not in RANGES:
         raise APIError("INVALID_PARAMETER", "参数 range 仅支持：7d、30d、90d")
+    store = request_query_snapshot(store)
     resolved_id, entity_name = resolve_entity(watch, entity_id)
     since_day = cutoff_day(RANGES[range_name])
     metrics = aggregate(store, resolved_id, since_day=since_day)

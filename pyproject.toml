@@ -21,8 +21,9 @@ all = ["anthropic>=0.40", "numpy>=1.24"]
 yuqing-run = "yuqing.run:main"
 yuqing-dashboard = "yuqing.dashboard:serve"
 
-[tool.setuptools]
-packages = ["yuqing", "yuqing.api"]
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["yuqing*"]
 
 [tool.setuptools.package-data]
 yuqing = [

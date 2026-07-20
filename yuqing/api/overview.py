@@ -9,6 +9,7 @@ from typing import Any
 from .. import analytics
 from ..report import aggregate
 from .entities import configured_entities, resolve_entity
+from .query_snapshot import request_query_snapshot
 from .responses import APIError
 
 RANGES = {"7d": 7, "30d": 30, "90d": 90}
@@ -55,6 +56,7 @@ def build_overview(store, watch: dict, *, entity_id: str | None = None,
     """Build the overview response data plus explicit quality metadata."""
     if range_name not in RANGES:
         raise APIError("INVALID_PARAMETER", "参数 range 仅支持：7d、30d、90d")
+    store = request_query_snapshot(store)
     resolved_id, entity_name = resolve_entity(watch, entity_id)
     since_day = cutoff_day(RANGES[range_name])
 

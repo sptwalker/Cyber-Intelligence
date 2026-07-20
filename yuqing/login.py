@@ -175,7 +175,7 @@ def _selfcheck() -> None:
 
 if __name__ == "__main__":
     import sys
-    from . import load_watch
+    from .watch_config import load_watch
 
     if len(sys.argv) > 1 and sys.argv[1] == "selftest":
         _selfcheck()

@@ -72,20 +72,21 @@ watch.yaml → collect(opencli登录态,混合,全部aliases) → SQLite(raw_obs
 
 | 模块 | 职责 |
 |---|---|
-| `collect.py` | 采集编排，登录态桥/增量水位/健康三态 |
+| `collect.py` / `collection/` | 兼容门面；外部抓取、语义相关性、过滤持久化、健康审计和全局编排分阶段实现 |
 | `normalization.py` | Collector/opencli 原始字段归一化为稳定 `CleanDoc` 契约 |
-| `store.py` | SQLite 分层 + 统一 doc_id 契约 + 幂等去重 |
+| `store.py` / `storage/` | `Store` 兼容门面；Schema、文档、运行事件、人工复核按仓储边界拆分 |
 | `analyze.py` | 情绪/ABSA/信息抽取（规则 stub + Claude tool use），evidence 逐字校验 |
 | `score.py` | 线性加权风险分（平台×情绪×危机×影响力，可解释） |
 | `alerts.py` | P0/P1 实时预警，事件簇冷却，竞品不误告警 |
-| `analytics.py` | 稳健 z-score 异常 / ABSA 聚合 / 上升话题 |
-| `report.py` | 周报生成（数字注入 + 引用校验器）+ 飞书推送 + SOV |
+| `analytics.py` / `analytics_*` | 兼容门面；时序、健康指数、语义聚类和主动学习分域实现 |
+| `report.py` / `reporting/` | 兼容门面；聚合、Markdown 成文、引用校验和飞书投递分阶段实现 |
 | `insights.py` | 老板日报 / AI 问答 / 诉求→需求 / 事件时间线 |
 | `dashboard.py` | 看板兼容门面、OAuth/会话策略和服务启动入口 |
-| `dashboard_http.py` | stdlib HTTP 适配、静态资源、旧接口和登录流程 |
-| `dashboard_api_v1.py` | `/api/v1/*` 路由编排，调用各领域 API 模块 |
-| `dashboard_views.py` | 旧版 HTML 页面渲染与图表数据组装 |
+| `dashboard_http.py` / `dashboard_http_parts/` | stdlib HTTP 兼容门面；响应、鉴权、GET/POST legacy 路由分层 |
+| `dashboard_api_v1.py` / `dashboard_context.py` / `dashboard_routes/` | `/api/v1/*` 请求上下文与领域路由注册表 |
+| `dashboard_views.py` / `dashboard_legacy/` | 旧版 URL 的兼容门面；HTML 页面按职责拆分，新 UI 只在 workbench 演进 |
 | `dashboard_runtime.py` | 单机后台跑批状态、互斥启动和协作式停止 |
+| `watch_config.py` | `watch.yaml` 路径、加载与校验的单一配置边界；包根仅保留兼容导出 |
 | `health.py` `budget.py` | 数据健康三态 / 成本配额熔断 |
 | `selfcheck.py` | 端到端离线自检（是改代码后的验收基准） |
 

@@ -10,8 +10,9 @@ from __future__ import annotations
 
 import html
 import json
-import threading
 import secrets
+import sys
+import threading
 import time
 import urllib.request
 from http.cookies import SimpleCookie
@@ -381,9 +382,8 @@ def _mutation_allowed(handler) -> bool:
 
 def make_handler(db: str):
     """Build the compatibility HTTP handler around the split dashboard modules."""
-    from . import dashboard as app
     from .dashboard_http import make_handler as build_handler
-    return build_handler(db, app)
+    return build_handler(db, sys.modules[__name__])
 
 
 def _run_test(provider: str) -> str:

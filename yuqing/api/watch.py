@@ -13,9 +13,9 @@ from typing import Any
 
 import yaml
 
-from .. import analytics, watch_path
+from .. import analytics
 from ..keywords import KeywordManager, TAGS
-from ..watch_config import validate_watch
+from ..watch_config import validate_watch, watch_path
 from .entities import configured_entities, resolve_entity
 from .responses import APIError
 
