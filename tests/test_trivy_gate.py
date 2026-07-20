@@ -50,6 +50,16 @@ DEBIAN12_BASE_CVES = {
         "python3-pil 9.4.0-1.1+deb12u1",
         "pipeline 1561/job 9323",
     ),
+    "CVE-2026-59197": (
+        "affected",
+        "python3-pil 9.4.0-1.1+deb12u1",
+        "pipeline 1562/job 9333",
+    ),
+    "CVE-2026-59200": (
+        "affected",
+        "python3-pil 9.4.0-1.1+deb12u1",
+        "pipeline 1562/job 9333",
+    ),
 }
 IGNORE_ENTRY = re.compile(r"^CVE-\d{4}-\d+$")
 IGNORE_DOCUMENTATION = re.compile(
@@ -78,7 +88,12 @@ class TrivyGateTest(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.dockerfile = (ROOT / "Dockerfile.collector").read_text(encoding="utf-8")
         cls.ignore_lines = (ROOT / ".trivyignore").read_text(encoding="utf-8").splitlines()
-        cls.ignored_cves = {line.strip() for line in cls.ignore_lines if IGNORE_ENTRY.fullmatch(line.strip())}
+        cls.ignore_entries = [
+            line.strip()
+            for line in cls.ignore_lines
+            if IGNORE_ENTRY.fullmatch(line.strip())
+        ]
+        cls.ignored_cves = set(cls.ignore_entries)
 
     def test_every_ignore_has_status_reason_and_policy_expiry(self) -> None:
         problems: list[str] = []
@@ -98,6 +113,13 @@ class TrivyGateTest(unittest.TestCase):
                     f"{cve}: expiry {documentation.group('expiry')} != {POLICY_EXPIRY}"
                 )
         self.assertEqual([], problems, "\n" + "\n".join(problems))
+
+    def test_ignore_entries_are_unique(self) -> None:
+        self.assertEqual(
+            len(self.ignore_entries),
+            len(self.ignored_cves),
+            "each CVE may appear only once in .trivyignore",
+        )
 
     def test_fixed_application_findings_are_not_ignored(self) -> None:
         self.assertEqual(set(), FIXED_APPLICATION_CVES & self.ignored_cves)
@@ -176,6 +198,26 @@ class TrivyGateTest(unittest.TestCase):
                     problems.append(f"{cve}: documentation missing {expected!r}")
 
         self.assertEqual([], problems, "\n" + "\n".join(problems))
+
+    def test_all_debian12_pipeline_exceptions_are_policy_tracked(self) -> None:
+        documented_cves = set()
+        for line in self.ignore_lines:
+            documentation = IGNORE_DOCUMENTATION.fullmatch(line.strip())
+            if documentation is None:
+                continue
+            documented_line = documentation.group(0)
+            if (
+                "collector image base OS" in documented_line
+                and "Debian 12/bookworm" in documented_line
+                and "pipeline " in documented_line
+            ):
+                documented_cves.add(documentation.group("cve"))
+
+        self.assertEqual(
+            set(DEBIAN12_BASE_CVES),
+            documented_cves,
+            "update DEBIAN12_BASE_CVES whenever a traced Debian 12 exception changes",
+        )
 
     def test_build_only_npm_bundle_is_removed_after_opencli_install(self) -> None:
         install = _run_command(self.dockerfile, "npm install --global")
