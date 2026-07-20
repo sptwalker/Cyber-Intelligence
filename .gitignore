@@ -19,3 +19,4 @@ yuqing_config.json
 *.log
 docs/apiKey-*.csv
 *.bak
+.tmp-agent/
